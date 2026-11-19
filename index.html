@@ -24,7 +24,12 @@
   <script src="common/primitives.js"></script>
 
   <!-- 2. 팀원별 모델 및 게임 컨트롤러 스크립트 -->
-  <script src="models/stadium_camera.js"></script>
+  <!-- 역할 1: 경기장 + 조명 + 카메라 (이 순서대로 불러야 함) -->
+  <script src="models/stadium_camera/mesh_builder.js"></script>
+  <script src="models/stadium_camera/stadium_model.js"></script>
+  <script src="models/stadium_camera/crowd.js"></script>
+  <script src="models/stadium_camera/lighting.js"></script>
+  <script src="models/stadium_camera/camera.js"></script>
   <script src="models/pitcher_batter.js"></script>
   <script src="models/game_controller.js"></script>
 
