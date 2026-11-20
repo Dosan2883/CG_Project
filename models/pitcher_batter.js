@@ -60,21 +60,17 @@
   const PITCH_ARC = 0.45;      // 포물선 최고점 추가 높이 (m)
   let isPitching = false;
   let pitchElapsed = 0;
+  let pitchEnd = [...BALL_END]; // 이번 투구의 도착점 (game_controller.js가 고른 칸)
 
-  function triggerPitch() {
+  // target: 도착점 [x, y, z] (생략하면 기본 스트라이크존 중앙)
+  // Q 키 입력은 game_controller.js에서 받아서, 고른 칸을 target으로 넘겨 호출합니다.
+  function triggerPitch(target) {
     isPitching = true;
     pitchElapsed = 0;
+    pitchEnd = target ? [...target] : [...BALL_END];
     ballNode.position = [...BALL_START];
     ballNode.visible = true;
   }
-
-  // 키보드 Q(한글 'ㅂ' 상태에서도 동작하도록 e.code === 'KeyQ' 사용)를 누르면 투구 시작
-  window.addEventListener('keydown', (e) => {
-    if (e.target && /^(INPUT|TEXTAREA|SELECT)$/.test(e.target.tagName)) return;
-    if (e.code === 'KeyQ' && !e.repeat) {
-      triggerPitch();
-    }
-  });
 
   // 7) 매 프레임 공 위치 및 자전 업데이트 (common/app.js가 매 프레임 자동 호출)
   const prevUpdate = window.updateBaseballScene;
@@ -86,7 +82,7 @@
     const t = Math.min(pitchElapsed / PITCH_DURATION, 1); // 0.0(출발) ~ 1.0(도착) 진행률
 
     // 직선 보간(lerpVec3) + 포물선 높이(4 * t * (1 - t)) 결합
-    const pos = lerpVec3(BALL_START, BALL_END, t);
+    const pos = lerpVec3(BALL_START, pitchEnd, t);
     pos[1] += 4 * t * (1 - t) * PITCH_ARC;
     ballNode.position = pos;
 
@@ -105,5 +101,8 @@
     batter: batterNode,
     ball: ballNode,
     triggerPitch,
+    isPitching: () => isPitching,
+    pitchDuration: PITCH_DURATION,
+    ballStart: BALL_START,
   };
 })();
