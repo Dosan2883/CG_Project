@@ -387,14 +387,19 @@ function findNodeById(rootNode, targetId) {
     return typeof value === 'number' ? scaling(value) : scalingXYZ(...value);
   }
 
-  function computeJointMatrix(node) {
+  const rootMatrix = identity();
+  const IDENTITY_MAT3 = new Float32Array([1, 0, 0, 0, 1, 0, 0, 0, 1]);
+
+  function computeJointWorldMatrix(parentMatrix, node) {
+    const [x, y, z] = node.position ?? origin;
     const [rx, ry, rz] = node.rotation ?? origin;
-    let matrix = translation(...(node.position ?? origin));
+    if (x === 0 && y === 0 && z === 0 && !rx && !ry && !rz && node.scale == null) return parentMatrix;
+    let matrix = translation(x, y, z);
     if (ry) matrix = multiply(matrix, rotationY(ry));
     if (rx) matrix = multiply(matrix, rotationX(rx));
     if (rz) matrix = multiply(matrix, rotationZ(rz));
     if (node.scale != null) matrix = multiply(matrix, scaleMatrix(node.scale));
-    return matrix;
+    return parentMatrix === rootMatrix ? matrix : multiply(parentMatrix, matrix);
   }
 
   function computeMeshMatrix(jointWorldMatrix, node) {
@@ -424,7 +429,6 @@ function findNodeById(rootNode, targetId) {
   }
 
   try {
-    const rootMatrix = identity();
     const program = createProgram(vertexShaderSource, fragmentShaderSource);
     gl.useProgram(program);
     const locations = {
@@ -487,8 +491,9 @@ function findNodeById(rootNode, targetId) {
       gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, mesh.indexBuffer);
 
       gl.uniformMatrix4fv(locations.modelMatrix, false, modelMatrix);
-      gl.uniformMatrix4fv(locations.mvpMatrix, false, multiply(viewProjectionMatrix, modelMatrix));
-      gl.uniformMatrix3fv(locations.normalMatrix, false, computeNormalMatrix(modelMatrix));
+      const worldSpaceMesh = modelMatrix === rootMatrix;
+      gl.uniformMatrix4fv(locations.mvpMatrix, false, worldSpaceMesh ? viewProjectionMatrix : multiply(viewProjectionMatrix, modelMatrix));
+      gl.uniformMatrix3fv(locations.normalMatrix, false, worldSpaceMesh ? IDENTITY_MAT3 : computeNormalMatrix(modelMatrix));
       gl.bindTexture(gl.TEXTURE_2D, texture);
       gl.uniform1i(locations.isEmissive, isEmissive ? 1 : 0);
       gl.uniform1f(locations.specularStrength, specular);
@@ -505,23 +510,24 @@ function findNodeById(rootNode, targetId) {
       gl.enableVertexAttribArray(shadowLocations.position);
       gl.vertexAttribPointer(shadowLocations.position, 3, gl.FLOAT, false, 0, 0);
       gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, mesh.indexBuffer);
-      gl.uniformMatrix4fv(shadowLocations.lightMvpMatrix, false, multiply(lightViewProjection, modelMatrix));
+      gl.uniformMatrix4fv(shadowLocations.lightMvpMatrix, false,
+        modelMatrix === rootMatrix ? lightViewProjection : multiply(lightViewProjection, modelMatrix));
       gl.drawElements(gl.TRIANGLES, mesh.indexCount, mesh.indexType, 0);
     }
 
-    // 모델 트리를 순회하며 도형이 있는 노드마다 drawNode(mesh, meshMatrix, node)를 호출
-    function forEachMesh(node, parentMatrix, drawNode) {
+    // 프레임마다 모델 행렬을 한 번 구해 화면과 그림자 패스에서 공유합니다.
+    function collectMeshes(node, parentMatrix, sceneMeshes) {
       if (!node || node.visible === false) return;
 
-      const jointWorldMatrix = multiply(parentMatrix, computeJointMatrix(node));
+      const jointWorldMatrix = computeJointWorldMatrix(parentMatrix, node);
 
       if (node.primitive) {
         const mesh = resolveMesh(node.primitive);
-        if (mesh) drawNode(mesh, computeMeshMatrix(jointWorldMatrix, node), node);
+        if (mesh) sceneMeshes.push({ mesh, meshMatrix: computeMeshMatrix(jointWorldMatrix, node), current: node });
       }
 
       for (const child of node.children ?? []) {
-        forEachMesh(child, jointWorldMatrix, drawNode);
+        collectMeshes(child, jointWorldMatrix, sceneMeshes);
       }
     }
 
@@ -532,13 +538,6 @@ function findNodeById(rootNode, targetId) {
         current.specular ?? 0, current.shininess ?? 32, current.fog !== false, // fog: false면 안개 제외 (태양 등)
         current.opacity ?? 1);
     }
-    function renderModelTree(node, parentMatrix, viewProjectionMatrix, blendQueue) {
-      forEachMesh(node, parentMatrix, (mesh, meshMatrix, current) => {
-        if (current.blend) blendQueue.push({ mesh, meshMatrix, current });
-        else drawNode(mesh, meshMatrix, current, viewProjectionMatrix);
-      });
-    }
-
     // 2단계: 반투명 노드. 깊이 테스트는 켜서 불투명 물체 뒤에 있으면 가려지고,
     //   깊이 기록은 꺼서 반투명끼리는 서로 가리지 않게 함.
     //   blend: 'add' = 더하기(빛 번짐, 겹칠수록 밝아짐) / 'alpha' = 일반 반투명
@@ -556,7 +555,7 @@ function findNodeById(rootNode, targetId) {
     }
 
     // 1패스: 광원 시점 깊이를 그림자 맵에 기록 (발광체·castShadow:false 노드는 제외)
-    function renderShadowMap(lightViewProjection) {
+    function renderShadowMap(lightViewProjection, casters) {
       gl.bindFramebuffer(gl.FRAMEBUFFER, shadowTarget.framebuffer);
       gl.viewport(0, 0, shadowTarget.size, shadowTarget.size);
       gl.clearColor(1, 1, 1, 1);
@@ -567,15 +566,39 @@ function findNodeById(rootNode, targetId) {
       for (const location of [locations.normal, locations.texCoord]) {
         if (location >= 0 && location !== shadowLocations.position) gl.disableVertexAttribArray(location);
       }
-      for (const modelRoot of window.SCENE_MODELS ?? []) {
-        forEachMesh(modelRoot, rootMatrix, (mesh, meshMatrix, current) => {
-          if (current.emissive || current.blend || current.castShadow === false) return;
-          drawMeshDepth(mesh, meshMatrix, lightViewProjection);
-        });
+      for (const { mesh, meshMatrix } of casters) {
+        drawMeshDepth(mesh, meshMatrix, lightViewProjection);
       }
 
       gl.bindFramebuffer(gl.FRAMEBUFFER, null);
       gl.useProgram(program);
+    }
+
+    let shadowLightInputs = [];
+    let shadowCasters = [];
+    let shadowViewProjection = null;
+    function updateShadowMap(light, sceneMeshes) {
+      if (!shadowTarget || !light.shadow?.enabled) return null;
+
+      const lightInputs = [...light.mainLightPos, ...(light.shadow.center ?? origin), light.shadow.halfSize ?? 50];
+      const lightChanged = lightInputs.some((value, i) => value !== shadowLightInputs[i]);
+      const casters = sceneMeshes.filter(({ mesh, current }) =>
+        mesh.positionBuffer && !current.emissive && !current.blend && current.castShadow !== false);
+      const castersChanged = casters.length !== shadowCasters.length || casters.some(({ mesh, meshMatrix }, i) => {
+        const previous = shadowCasters[i];
+        return mesh !== previous.mesh || (meshMatrix !== previous.meshMatrix &&
+          meshMatrix.some((value, j) => value !== previous.meshMatrix[j]));
+      });
+      if (lightChanged) shadowViewProjection = computeLightViewProjection(light);
+      if (lightChanged || castersChanged) {
+        gl.activeTexture(gl.TEXTURE1);
+        gl.bindTexture(gl.TEXTURE_2D, null); // 기록 중인 텍스처를 읽지 않도록 잠시 해제
+        gl.activeTexture(gl.TEXTURE0);
+        renderShadowMap(shadowViewProjection, casters);
+        shadowLightInputs = lightInputs;
+        shadowCasters = casters;
+      }
+      return shadowViewProjection;
     }
 
     function applyLighting(light, lightViewProjection) {
@@ -617,18 +640,16 @@ function findNodeById(rootNode, targetId) {
       if (typeof window.updateBaseballScene === 'function') {
         window.updateBaseballScene(timeSec, dt);
       }
+      window.STADIUM_PARTS?.updateFrame?.(timeSec, dt);
 
       const light = window.ACTIVE_LIGHTING ?? defaultLighting;
-
-      // 1패스: 그림자 맵 (ACTIVE_LIGHTING.shadow.enabled일 때만)
-      let lightViewProjection = null;
-      if (shadowTarget && light.shadow && light.shadow.enabled) {
-        lightViewProjection = computeLightViewProjection(light);
-        gl.activeTexture(gl.TEXTURE1);
-        gl.bindTexture(gl.TEXTURE_2D, null); // 기록 중인 텍스처를 읽지 않도록 잠시 해제
-        gl.activeTexture(gl.TEXTURE0);
-        renderShadowMap(lightViewProjection);
+      const sceneMeshes = [];
+      for (const modelRoot of window.SCENE_MODELS ?? []) {
+        collectMeshes(modelRoot, rootMatrix, sceneMeshes);
       }
+
+      // 1패스: 광원이나 그림자를 만드는 메시가 바뀌었을 때 깊이 맵 갱신
+      const lightViewProjection = updateShadowMap(light, sceneMeshes);
 
       // 2패스: 화면에 그리기
       gl.viewport(0, 0, canvas.width, canvas.height);
@@ -648,8 +669,10 @@ function findNodeById(rootNode, targetId) {
       const viewProjection = multiply(projection, view);
       gl.uniform3fv(locations.cameraPosition, cam.eye); // 정반사광 계산용 시선 방향
       const blendQueue = [];
-      for (const modelRoot of window.SCENE_MODELS ?? []) {
-        renderModelTree(modelRoot, rootMatrix, viewProjection, blendQueue); // 1단계: 불투명
+      for (const part of sceneMeshes) {
+        const { mesh, meshMatrix, current } = part;
+        if (current.blend) blendQueue.push(part);
+        else drawNode(mesh, meshMatrix, current, viewProjection);
       }
       renderBlendQueue(blendQueue, viewProjection);                         // 2단계: 반투명
     }

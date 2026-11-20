@@ -4,7 +4,7 @@
 // 궤도 카메라(드래그 회전·이동, 휠 줌, 키보드 이동)와 게임 시점 버튼 3~6, 시점 초기화를 만듭니다.
 // 파일끼리 공유하는 값은 window.STADIUM_PARTS 한 곳에 모읍니다. (다른 팀원 코드와 이름 충돌 방지)
 (function () {
-  const { DEG, MOUND_DIST } = window.STADIUM_PARTS;
+  const { DEG, MOUND_DIST, onFrame } = window.STADIUM_PARTS;
   // ------------------------------------------------------------------
   // 카메라: target 주위를 도는 궤도(orbit) 카메라
   //   - 왼쪽 드래그: 회전 / 오른쪽·Shift 드래그: 이동 / 휠: 줌
@@ -105,10 +105,7 @@
   updateCamera();
 
   // 매 프레임 눌린 키만큼 이동 (프레임 시간 dt를 곱해 속도가 일정하게)
-  let lastFrame = null;
-  function cameraLoop(now) {
-    const dt = lastFrame === null ? 0 : Math.min((now - lastFrame) / 1000, 0.1);
-    lastFrame = now;
+  function updateKeyboardCamera(timeSec, dt) {
     if (keys.size > 0) {
       const boost = keys.has('ShiftLeft') || keys.has('ShiftRight') ? 3 : 1;
       const axis = (plus, minus) => (keys.has(plus) ? 1 : 0) - (keys.has(minus) ? 1 : 0);
@@ -123,9 +120,8 @@
       orbit.pitch = clamp(orbit.pitch + axis('ArrowUp', 'ArrowDown') * 60 * dt, PITCH_MIN, PITCH_MAX);
       updateCamera();
     }
-    requestAnimationFrame(cameraLoop);
   }
-  requestAnimationFrame(cameraLoop);
+  onFrame(updateKeyboardCamera, { first: true }); // 빛 번짐 판을 돌리기 전에 카메라를 갱신
 
   const MOVE_KEYS = new Set(['KeyW', 'KeyA', 'KeyS', 'KeyD', 'KeyQ', 'KeyE', 'Space', 'ShiftLeft', 'ShiftRight',
     'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight']);

@@ -27,6 +27,16 @@
   const FOUL = 45 * DEG;     // 파울 라인 각도 (중견수 방향 기준 ±45°)
   const FIELD_CENTER = [0, 0, -40]; // 벽 법선을 그라운드 쪽으로 맞출 때 기준점
 
+  const frameUpdaters = [];
+  function onFrame(update, { first = false } = {}) {
+    if (first) frameUpdaters.unshift(update);
+    else frameUpdaters.push(update);
+  }
+  function updateFrame(timeSec, dt) {
+    const clampedDt = Math.min(dt, 0.1);
+    for (const update of frameUpdaters) update(timeSec, clampedDt);
+  }
+
   // 색은 0~1로 적고, 노드에 넣을 때 0~255로 바꿉니다.
   const COLORS = {
     groundGrass: [0.20, 0.45, 0.20],
@@ -92,6 +102,7 @@
   const glowNodes = [];
   const towerLightPositions = [];
   const roofLightPositions = [];
+  const roofFixtures = [];
   // 재질별 정반사광 (Blinn-Phong): specular = 반사 세기, shininess = 광택 (클수록 하이라이트가 작고 날카로움)
   //   잔디·흙처럼 거친 면은 넣지 않음 (정반사 없음)
   //   해가 멀리 있어 평평한 면은 반사 각도가 거의 같으므로, 광택을 낮게(넓은 하이라이트) 잡아야 눈에 보입니다.
@@ -132,15 +143,23 @@
   // ------------------------------------------------------------------
   // 메시 빌더: 면을 추가하면 색별로 따로 쌓았다가, build()에서 색마다 메시 하나씩 반환
   // ------------------------------------------------------------------
+  // 공통 'box' 도형과 같은 면 순서와 삼각형 분할을 사용합니다. 마지막 면은 바닥입니다.
+  const BOX_FACES = [
+    [[3, 2, 6, 7], [0, 0, 1]], [[1, 0, 4, 5], [0, 0, -1]],
+    [[7, 6, 5, 4], [0, 1, 0]], [[2, 1, 5, 6], [1, 0, 0]],
+    [[0, 3, 7, 4], [-1, 0, 0]], [[0, 1, 2, 3], [0, -1, 0]],
+  ];
+
   class MeshBuilder {
     constructor() {
-      this.groups = new Map(); // 색 문자열 → { color, positions, normals, indices }
+      this.groups = new Map(); // 색과 그림자 생성 여부가 같은 면끼리 묶음
+      this.castShadow = true;
     }
 
     group(color) {
-      const key = color.join(',');
+      const key = `${color.join(',')}|${this.castShadow}`;
       if (!this.groups.has(key)) {
-        this.groups.set(key, { color, positions: [], normals: [], indices: [] });
+        this.groups.set(key, { color, castShadow: this.castShadow, positions: [], normals: [], indices: [] });
       }
       return this.groups.get(key);
     }
@@ -164,12 +183,14 @@
         }
       }
       if (dot(n, ref) < 0) n = n.map((x) => -x);
+      this.appendFace(points, this.group(color), n);
+    }
 
-      const g = this.group(color);
+    appendFace(points, g, normal) {
       const start = g.positions.length / 3;
       for (const p of points) {
         g.positions.push(p[0], p[1], p[2]);
-        g.normals.push(n[0], n[1], n[2]);
+        g.normals.push(normal[0], normal[1], normal[2]);
       }
       // 부채꼴(fan) 방식으로 삼각형 분할: (0,1,2), (0,2,3), ...
       for (let i = 1; i < points.length - 1; i++) {
@@ -183,6 +204,32 @@
 
     quad(a, b, c, d, color, hint) {
       this.face([a, b, c, d], color, hint);
+    }
+
+    // 바닥 중심 기준 상자. transform에는 회전과 이동만 들어갑니다.
+    box([x, y, z], [width, height, depth], color, { transform, bottom = true } = {}) {
+      const left = x - width / 2, right = x + width / 2;
+      const back = z - depth / 2, front = z + depth / 2;
+      const top = y + height;
+      const corners = [
+        [left, y, back], [right, y, back], [right, y, front], [left, y, front],
+        [left, top, back], [right, top, back], [right, top, front], [left, top, front],
+      ];
+      const rotate = ([vx, vy, vz]) => [
+        transform[0] * vx + transform[4] * vy + transform[8] * vz,
+        transform[1] * vx + transform[5] * vy + transform[9] * vz,
+        transform[2] * vx + transform[6] * vy + transform[10] * vz,
+      ];
+      const points = transform ? corners.map((point) => {
+        const [px, py, pz] = rotate(point);
+        return [px + transform[12], py + transform[13], pz + transform[14]];
+      }) : corners;
+      const faceCount = bottom ? BOX_FACES.length : BOX_FACES.length - 1;
+      const group = this.group(color);
+      for (let i = 0; i < faceCount; i++) {
+        const [indices, normal] = BOX_FACES[i];
+        this.appendFace(indices.map((index) => points[index]), group, transform ? rotate(normal) : normal);
+      }
     }
 
     // 홈플레이트를 꼭짓점으로 하는 부채꼴 바닥 : rOut(θ) 바깥 반지름, rIn(θ) 안쪽 반지름
@@ -281,10 +328,11 @@
       }
     }
 
-    // 색마다 엔진용 메시 하나: { color, mesh: { positions, normals, texCoords, indices } }
+    // 색과 그림자 생성 여부별 엔진용 메시
     build() {
       return [...this.groups.values()].map((g) => ({
         color: g.color,
+        castShadow: g.castShadow,
         mesh: {
           positions: new Float32Array(g.positions),
           normals: new Float32Array(g.normals),
@@ -303,6 +351,7 @@
           id: `${id}_part${i}`,
           primitive: part.mesh,
           color: rgb255(part.color),
+          castShadow: part.castShadow,
         }, part.color)),
       };
     }
@@ -310,6 +359,7 @@
 
   window.STADIUM_PARTS = {
     BASE_DIST, MOUND_DIST, DEG, FOUL, FIELD_CENTER, COLORS, rgb255, dir, fenceRadius,
-    outwardDirections, glowNodes, towerLightPositions, roofLightPositions, applyColorTraits, MeshBuilder,
+    outwardDirections, glowNodes, towerLightPositions, roofLightPositions, roofFixtures,
+    onFrame, updateFrame, MeshBuilder,
   };
 })();

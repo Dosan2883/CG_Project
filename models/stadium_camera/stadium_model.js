@@ -5,14 +5,16 @@
 // window.SCENE_MODELS에 경기장 루트 노드를 등록합니다.
 // 파일끼리 공유하는 값은 window.STADIUM_PARTS 한 곳에 모읍니다. (다른 팀원 코드와 이름 충돌 방지)
 (function () {
-  const { BASE_DIST, MOUND_DIST, DEG, FOUL, FIELD_CENTER, COLORS, rgb255, dir, fenceRadius, outwardDirections, towerLightPositions, roofLightPositions, applyColorTraits, MeshBuilder } = window.STADIUM_PARTS;
+  const {
+    BASE_DIST, MOUND_DIST, DEG, FOUL, FIELD_CENTER, COLORS, rgb255, dir, fenceRadius,
+    outwardDirections, towerLightPositions, roofLightPositions, roofFixtures, MeshBuilder,
+  } = window.STADIUM_PARTS;
   // ------------------------------------------------------------------
   // 메시 생성 (실제 크기, 홈플레이트 기준 좌표)
   // ------------------------------------------------------------------
 
   // 그라운드 전체: 얇은 층을 y 높이로 겹쳐서 그립니다 (z-fighting 방지, 아래 → 위 순서)
-  function buildField() {
-    const m = new MeshBuilder();
+  function buildField(m) {
     const secondZ = -BASE_DIST * Math.SQRT2;
 
     // 1) 바닥 전체 (파울 지역 잔디)  y = 0
@@ -52,15 +54,14 @@
       m.disc(s * 11, 4, 1.5, 0.04, COLORS.dirt, 32);
       m.ring(s * 11, 4, 1.4, 1.5, 0.06, COLORS.white, 32);
     }
-    return m;
   }
 
-  // 투수 마운드: 단면 [반지름, 높이]를 y축으로 회전시킨 회전체 (원점 중심)
-  function buildMound() {
-    const m = new MeshBuilder();
+  // 투수 마운드: 단면 [반지름, 높이]를 y축으로 회전시킨 회전체 (투수판보다 약간 홈 쪽)
+  function buildMound(m) {
     const profile = [[0, 0.34], [0.9, 0.34], [1.8, 0.24], [2.74, 0.09]];
     const segments = 40;
-    const P = (ang, r, h) => [Math.cos(ang) * r, h, Math.sin(ang) * r];
+    const moundZ = -MOUND_DIST + 0.45;
+    const P = (ang, r, h) => [Math.cos(ang) * r, h, moundZ + Math.sin(ang) * r];
     for (let i = 0; i < segments; i++) {
       const a = (i / segments) * Math.PI * 2, b = ((i + 1) / segments) * Math.PI * 2;
       for (let j = 0; j < profile.length - 1; j++) {
@@ -69,26 +70,22 @@
         else m.quad(P(a, r0, h0), P(a, r1, h1), P(b, r1, h1), P(b, r0, h0), COLORS.mound);
       }
     }
-    return m;
   }
 
   // 홈플레이트: 오각형 기둥 (뒤쪽 꼭짓점 = 원점, 투수 방향 = -z)
-  function buildHomePlate() {
-    const m = new MeshBuilder();
-    const h = 0.035;
+  function buildHomePlate(m) {
+    const base = 0.12, top = base + 0.035;
     const pent = [[0, 0], [0.216, -0.216], [0.216, -0.432], [-0.216, -0.432], [-0.216, -0.216]];
-    m.face(pent.map(([x, z]) => [x, h, z]), COLORS.white);
+    m.face(pent.map(([x, z]) => [x, top, z]), COLORS.white);
     for (let i = 0; i < pent.length; i++) {
       const a = pent[i], b = pent[(i + 1) % pent.length];
       const out = [(a[0] + b[0]) / 2, 0, (a[1] + b[1]) / 2 + 0.216]; // 판 중심(0,-0.216)에서 바깥쪽
-      m.quad([a[0], 0, a[1]], [b[0], 0, b[1]], [b[0], h, b[1]], [a[0], h, a[1]], COLORS.white, out);
+      m.quad([a[0], base, a[1]], [b[0], base, b[1]], [b[0], top, b[1]], [a[0], top, a[1]], COLORS.white, out);
     }
-    return m;
   }
 
   // 외야 펜스: 펜스 거리 r(θ)를 따라가는 두께 있는 호 모양 벽
-  function buildFence() {
-    const m = new MeshBuilder();
+  function buildFence(m) {
     const height = 3.0, thick = 0.4, segments = 90;
     const up = (p, h) => [p[0], h, p[2]];
     for (let i = 0; i < segments; i++) {
@@ -102,7 +99,6 @@
       m.quad(oa, ob, up(ob, height), up(oa, height), COLORS.fence, da);     // 바깥 면
       m.quad(up(ia, height), up(ib, height), up(ob, height), up(oa, height), COLORS.fenceTop); // 윗면
     }
-    return m;
   }
 
   // 계단식 관중석 단면: [바깥 방향 오프셋, 높이, 색]
@@ -190,19 +186,16 @@
   }
 
   // 관중석 (18줄 계단, 한 바퀴)
-  function buildBowlStands() {
-    const m = new MeshBuilder();
+  function buildBowlStands(m, path) {
     const s = BOWL_STAND;
-    m.extrudeAlong(bowlPath(), standProfile(s.rows, s.frontWall, s.rise, s.depth, COLORS.seatA, COLORS.seatB), true);
-    return m;
+    m.extrudeAlong(path, standProfile(s.rows, s.frontWall, s.rise, s.depth, COLORS.seatA, COLORS.seatB), true);
   }
 
   // 관중석 뒤 외벽 (사진의 여러 층 건물 외관): 바깥 면에 층마다 색 띠
   const FACADE_OFFSET = 17.6, FACADE_HEIGHT = 13.2;
-  function buildFacade() {
-    const m = new MeshBuilder();
+  function buildFacade(m, path) {
     const f = FACADE_OFFSET;
-    m.extrudeAlong(bowlPath(), [
+    m.extrudeAlong(path, [
       [f, 0, COLORS.concrete],
       [f, 2.8, COLORS.facadeGlass, 'out'],   // 1층 유리
       [f, 3.4, COLORS.concrete, 'out'],
@@ -214,7 +207,6 @@
       [f, FACADE_HEIGHT, COLORS.concrete, 'out'],
       [16.1, FACADE_HEIGHT, COLORS.concrete, 'up'], // 옥상 (관중석 뒷벽까지)
     ], true);
-    return m;
   }
 
   // 지붕 (캐노피): 외벽 위에서 시작해 그라운드 쪽으로 올라가며 관중석 뒤쪽 절반을 덮는 얇은 판, 한 바퀴
@@ -224,8 +216,7 @@
   // 지붕 윗면은 골판(주름진 패널)처럼 산·골을 번갈아 만듦.
   //   면마다 기울기가 달라서 햇빛·조명을 받는 각도가 달라지고, 정반사 하이라이트가 줄무늬로 반짝입니다.
   const ROOF_PANELS = 8, ROOF_RIDGE = 0.25; // 패널 개수, 산 높이 (m)
-  function buildRoof() {
-    const m = new MeshBuilder();
+  function buildRoof(m, path) {
     const back = FACADE_OFFSET + 0.2;
     const top = [];
     for (let k = 1; k <= ROOF_PANELS * 2; k++) {
@@ -235,37 +226,34 @@
       const color = t > 0.75 ? COLORS.roofTop2 : COLORS.roofTop; // 앞쪽 띠는 밝은 파랑
       top.push([off, h, color, 'up']);
     }
-    m.extrudeAlong(bowlPath(), [
+    m.extrudeAlong(path, [
       [back, FACADE_HEIGHT, COLORS.roofEdge],
       ...top,
       [ROOF_FRONT, ROOF_FRONT_TOP - ROOF_EDGE, COLORS.roofEdge, 'in'],
       [back, FACADE_HEIGHT - 0.3, COLORS.roofUnder, 'down'],
       [back, FACADE_HEIGHT, COLORS.roofEdge, 'out'],
     ], true);
-    return m;
+  }
+
+  function boxTransform(position, yaw, pitch = 0) {
+    const turned = multiply(translation(...position), rotationY(yaw));
+    return pitch ? multiply(turned, rotationX(pitch)) : turned;
   }
 
   // 지붕 앞 가장자리 아래에 달린 조명 (경로 점 2개마다 1개, 그라운드 쪽으로 35° 숙임)
-  function buildRoofLights() {
-    const path = bowlPath();
+  function buildRoofLights(m, path) {
     const outward = outwardDirections(path, true);
-    const lights = [];
     for (let i = 0; i < path.length; i += 2) {
       const p = path[i], n = outward[i];
       const off = ROOF_FRONT + 0.6;
       const yaw = Math.atan2(n[0], n[2]); // 로컬 -z = -n (그라운드 쪽)
       roofLightPositions.push([p[0] + n[0] * (off - 2), ROOF_FRONT_TOP - 3, p[2] + n[2] * (off - 2)]);
-      lights.push({
-        id: `stadium_roof_light_${i}`,
-        position: [p[0] + n[0] * off, ROOF_FRONT_TOP - ROOF_EDGE - 0.75, p[2] + n[2] * off],
-        rotation: [-35 * DEG, yaw, 0],
-        children: [
-          boxPart(`stadium_roof_light_${i}_frame`, [0, 0, 0], [3.2, 0.7, 0.4], COLORS.towerFrame),
-          boxPart(`stadium_roof_light_${i}_lamp`, [0, 0.1, -0.22], [2.8, 0.5, 0.06], COLORS.lamp),
-        ],
-      });
+      const position = [p[0] + n[0] * off, ROOF_FRONT_TOP - ROOF_EDGE - 0.75, p[2] + n[2] * off];
+      roofFixtures.push({ id: `stadium_roof_light_${i}`, position });
+      const transform = boxTransform(position, yaw, -35 * DEG);
+      m.box([0, 0, 0], [3.2, 0.7, 0.4], COLORS.towerFrame, { transform });
+      m.box([0, 0.1, -0.22], [2.8, 0.5, 0.06], COLORS.lamp, { transform });
     }
-    return { id: 'stadium_roof_lights', children: lights };
   }
 
   // 경기장 바깥 둘레(외벽 바로 바깥)의 점: 외야 호 위 각도 theta 기준 (조명탑·전광판 위치용)
@@ -274,69 +262,35 @@
     return [d[0] * r, 0, d[2] * r];
   }
 
-  // ------------------------------------------------------------------
-  // 상자 부품: 엔진의 'box'(한 변 1, 중심 원점) + meshOffset/meshScale
-  //   center = 부모 기준 바닥면 중심, size = [가로, 높이, 세로]
-  //   meshOffset·meshScale은 자식에게 상속되지 않음 (HW1의 clone 후 scale과 같은 개념)
-  // ------------------------------------------------------------------
-  function boxPart(id, center, size, color) {
-    return applyColorTraits({
-      id,
-      primitive: 'box',
-      meshOffset: [center[0], center[1] + size[1] / 2, center[2]],
-      meshScale: size,
-      color: rgb255(color),
-    }, color);
-  }
-
-  // 조명탑 (모양만, 빛은 아직 없음)
-  //   tower(바닥 위치, 그라운드 쪽으로 회전)
-  //    ├ 기둥 (cylinder)
-  //    └ head (기둥 꼭대기, 아래로 25° 기울임)
-  //        ├ 램프 판 (뒤판) + 아래 발판
-  //        └ 램프 4 × 6개 (그라운드 쪽 = 로컬 -z 면)
+  // 조명탑의 뒤판·발판·램프는 배치에 추가하고 원통 기둥만 별도 도형으로 돌려줍니다.
   const TOWER_HEIGHT = 40;
-  function buildLightTower(id, position) {
+  function buildLightTower(m, id, position) {
     // 로컬 -z가 FIELD_CENTER를 향하도록 y축 회전: rotationY(a)에서 로컬 -z = (-sin a, 0, -cos a)
     const dx = FIELD_CENTER[0] - position[0], dz = FIELD_CENTER[2] - position[2];
     const yaw = Math.atan2(-dx, -dz);
     const len = Math.hypot(dx, dz);
     towerLightPositions.push([position[0] + dx / len * 3, TOWER_HEIGHT + 2, position[2] + dz / len * 3]);
 
-    const lamps = [];
+    const transform = boxTransform([position[0], TOWER_HEIGHT, position[2]], yaw, -25 * DEG);
     const cols = 6, rows = 4, lampW = 1.2, lampH = 1.0, gap = 0.25;
+    const panelW = cols * (lampW + gap) + 0.6, panelH = rows * (lampH + gap) + 0.6;
+    m.box([0, 0, 0], [panelW, panelH, 0.6], COLORS.towerFrame, { transform });
+    m.box([0, -0.3, -1.0], [panelW, 0.3, 1.6], COLORS.towerFrame, { transform });
     for (let r = 0; r < rows; r++) {
       for (let c = 0; c < cols; c++) {
         const x = (c - (cols - 1) / 2) * (lampW + gap);
         const y = 0.4 + r * (lampH + gap);
-        lamps.push(boxPart(`${id}_lamp_${r}_${c}`, [x, y, -0.45], [lampW, lampH, 0.3], COLORS.lamp));
+        m.box([x, y, -0.45], [lampW, lampH, 0.3], COLORS.lamp, { transform });
       }
     }
-    const panelW = cols * (lampW + gap) + 0.6, panelH = rows * (lampH + gap) + 0.6;
-
     return {
-      id,
+      id: `${id}_pole`,
+      primitive: 'cylinder',
       position,
       rotation: [0, yaw, 0],
-      children: [
-        {
-          id: `${id}_pole`,
-          primitive: 'cylinder',            // 반지름 0.5, 높이 1 (중심 원점)
-          meshOffset: [0, TOWER_HEIGHT / 2, 0],
-          meshScale: [1.0, TOWER_HEIGHT, 1.0],
-          color: rgb255(COLORS.towerPole),
-        },
-        {
-          id: `${id}_head`,
-          position: [0, TOWER_HEIGHT, 0],
-          rotation: [-25 * DEG, 0, 0],      // 램프 면(-z)이 그라운드 아래쪽을 향하게
-          children: [
-            boxPart(`${id}_panel`, [0, 0, 0], [panelW, panelH, 0.6], COLORS.towerFrame),
-            boxPart(`${id}_catwalk`, [0, -0.3, -1.0], [panelW, 0.3, 1.6], COLORS.towerFrame),
-            ...lamps,
-          ],
-        },
-      ],
+      meshOffset: [0, TOWER_HEIGHT / 2, 0],
+      meshScale: [1.0, TOWER_HEIGHT, 1.0],
+      color: rgb255(COLORS.towerPole),
     };
   }
 
@@ -345,86 +299,59 @@
   const third = [-first[0], 0, first[2]];
 
   function buildStadiumModel() {
-    const children = [
-      buildField().toNode('stadium_field'),
-      buildFence().toNode('stadium_fence'),
-      buildBowlStands().toNode('stadium_stands'),
-      buildFacade().toNode('stadium_facade'),
-      buildRoof().toNode('stadium_roof'),
-      buildRoofLights(),
-      // 마운드 중심은 투수판보다 약간 홈 쪽
-      buildMound().toNode('stadium_mound', { position: [0, 0, -MOUND_DIST + 0.45] }),
-      buildHomePlate().toNode('stadium_home_plate', { position: [0, 0.12, 0] }),
-      // 투수판: 마운드 꼭대기(높이 0.34)
-      {
-        id: 'stadium_rubber',
-        position: [0, 0.34, -MOUND_DIST],
-        children: [boxPart('stadium_rubber_box', [0, 0, 0], [0.61, 0.04, 0.15], COLORS.white)],
-      },
-    ];
+    const m = new MeshBuilder();
+    const path = bowlPath();
+    m.castShadow = false;
+    buildField(m);
+    buildHomePlate(m);
+    buildFacade(m, path);
+
+    m.castShadow = true;
+    buildFence(m);
+    buildBowlStands(m, path);
+    buildRoof(m, path);
+    buildRoofLights(m, path);
+    buildMound(m);
+    m.box([0, 0.34, -MOUND_DIST], [0.61, 0.04, 0.15], COLORS.white);
 
     // 1·2·3루 베이스: 위치 이동 → 45° 회전한 좌표계에 납작한 상자
-    [first, second, third].forEach((p, i) => {
-      children.push({
-        id: `stadium_base${i + 1}`,
-        position: [p[0], 0.06, p[2]],
-        rotation: [0, FOUL, 0],
-        children: [boxPart(`stadium_base${i + 1}_box`, [0, 0, 0], [0.38, 0.1, 0.38], COLORS.white)],
-      });
-    });
+    for (const [x, , z] of [first, second, third]) {
+      const transform = boxTransform([x, 0.06, z], FOUL);
+      m.box([0, 0, 0], [0.38, 0.1, 0.38], COLORS.white, { transform });
+    }
 
     for (const s of [1, -1]) {
-      const side = s > 0 ? 'first' : 'third';
-
       // 파울 폴: 펜스 끝
       const pole = dir(s * FOUL).map((x) => x * (fenceRadius(FOUL) + 0.2));
-      children.push({
-        id: `stadium_pole_${side}`,
-        position: pole,
-        children: [boxPart(`stadium_pole_${side}_box`, [0, 0, 0], [0.35, 15, 0.35], COLORS.pole)],
-      });
+      m.box(pole, [0.35, 15, 0.35], COLORS.pole);
 
-      // 더그아웃 (계층): 파울 라인을 따라 24m, 바깥쪽으로 14.5m → 파울 라인과 나란하게 회전
+      // 더그아웃: 파울 라인을 따라 24m, 바깥쪽으로 14.5m → 파울 라인과 나란하게 회전
       //   로컬 x축 = 파울 라인 방향, 로컬 -z = 그라운드 쪽
       const d = dir(s * FOUL), n = dir(s * 135 * DEG);
-      children.push({
-        id: `stadium_dugout_${side}`,
-        position: [d[0] * 24 + n[0] * 14.5, 0, d[2] * 24 + n[2] * 14.5],
-        rotation: [0, s * FOUL, 0],
-        children: [
-          boxPart(`stadium_dugout_${side}_body`, [0, 0, 0], [14, 2.2, 4], COLORS.dugout),
-          boxPart(`stadium_dugout_${side}_roof`, [0, 2.2, 0], [14.4, 0.2, 4.4], COLORS.roof),
-          boxPart(`stadium_dugout_${side}_opening`, [0, 0.3, -2.02], [12, 1.6, 0.04], COLORS.dugoutDark),
-        ],
-      });
+      const transform = boxTransform([d[0] * 24 + n[0] * 14.5, 0, d[2] * 24 + n[2] * 14.5], s * FOUL);
+      m.box([0, 0, 0], [14, 2.2, 4], COLORS.dugout, { transform });
+      m.box([0, 2.2, 0], [14.4, 0.2, 4.4], COLORS.roof, { transform });
+      m.box([0, 0.3, -2.02], [12, 1.6, 0.04], COLORS.dugoutDark, { transform });
     }
 
     // 조명탑: 사진처럼 외야 좌중간·우중간 외벽 바로 바깥에 2개 (나머지 조명은 지붕에 달림)
+    const towerPoles = [];
     for (const s of [1, -1]) {
       const side = s > 0 ? 'first' : 'third';
-      children.push(buildLightTower(`stadium_tower_${side}_outfield`, outsideBowlPoint(s * 20 * DEG, 2)));
+      towerPoles.push(buildLightTower(m, `stadium_tower_${side}_outfield`, outsideBowlPoint(s * 20 * DEG, 2)));
     }
 
-    // 전광판 (2단 계층: 전광판 전체 → 기둥 꼭대기 판)
+    // 전광판: 기둥 두 개와 기둥 꼭대기 판
     const SCOREBOARD_POST = 18; // 지붕(약 16m) 위로 판이 보이도록
-    children.push({
-      id: 'stadium_scoreboard',
-      position: outsideBowlPoint(0, 1.5),
-      children: [
-        boxPart('stadium_scoreboard_post_l', [-10, 0, 0], [1, SCOREBOARD_POST, 1], COLORS.concrete),
-        boxPart('stadium_scoreboard_post_r', [10, 0, 0], [1, SCOREBOARD_POST, 1], COLORS.concrete),
-        {
-          id: 'stadium_scoreboard_panel',
-          position: [0, SCOREBOARD_POST, 0],
-          children: [
-            boxPart('stadium_scoreboard_board', [0, 0, 0], [30, 12, 1.5], COLORS.board),
-            boxPart('stadium_scoreboard_screen', [0, 1, 0.76], [27, 10, 0.04], COLORS.boardFace),
-          ],
-        },
-      ],
-    });
+    const [boardX, , boardZ] = outsideBowlPoint(0, 1.5);
+    m.box([boardX - 10, 0, boardZ], [1, SCOREBOARD_POST, 1], COLORS.concrete);
+    m.box([boardX + 10, 0, boardZ], [1, SCOREBOARD_POST, 1], COLORS.concrete);
+    m.box([boardX, SCOREBOARD_POST, boardZ], [30, 12, 1.5], COLORS.board);
+    m.box([boardX, SCOREBOARD_POST + 1, boardZ + 0.76], [27, 10, 0.04], COLORS.boardFace);
 
-    return { id: 'stadium_root', children };
+    const root = m.toNode('stadium_root');
+    root.children.push(...towerPoles);
+    return root;
   }
 
   window.SCENE_MODELS = window.SCENE_MODELS ?? [];

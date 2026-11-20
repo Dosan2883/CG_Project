@@ -4,7 +4,7 @@
 // 5시~23시 시간에 따라 태양 위치·하늘색·빛 색·경기장 조명을 바꾸고, 시간 슬라이더와 버튼 11을 만듭니다.
 // 파일끼리 공유하는 값은 window.STADIUM_PARTS 한 곳에 모읍니다. (다른 팀원 코드와 이름 충돌 방지)
 (function () {
-  const { DEG, glowNodes, towerLightPositions, roofLightPositions } = window.STADIUM_PARTS;
+  const { DEG, glowNodes, towerLightPositions, roofLightPositions, roofFixtures, onFrame } = window.STADIUM_PARTS;
   // ------------------------------------------------------------------
   // 조명: 시간대(5시 ~ 23시)에 따라 태양·하늘·빛·경기장 조명이 바뀜
   //   common/app.js가 매 프레임 window.ACTIVE_LIGHTING을 읽어 그립니다.
@@ -212,9 +212,8 @@
     return node;
   }
   const glowRoot = { id: 'stadium_glows', children: [] };
-  const roofLights = window.STADIUM_PARTS.stadiumRoot.children.find((n) => n.id === 'stadium_roof_lights');
-  for (const light of roofLights ? roofLights.children : []) {
-    glowRoot.children.push(addGlow(`${light.id}_glow`, light.position, 7, 0.6));   // 지붕 조명: 7m 판
+  for (const { id, position } of roofFixtures) {
+    glowRoot.children.push(addGlow(`${id}_glow`, position, 7, 0.6)); // 지붕 조명: 7m 판
   }
   towerLightPositions.forEach((p, i) => {
     glowRoot.children.push(addGlow(`tower_glow_${i}`, [p[0], p[1] + 0.5, p[2]], 20, 0.85)); // 조명탑: 20m 판
@@ -224,17 +223,17 @@
   // 매 프레임 판을 카메라 쪽으로 돌림: 판의 앞면(+z)이 카메라를 향하도록 yaw(y축)·pitch(x축) 계산
   function faceGlowsToCamera() {
     const cam = window.ACTIVE_CAMERA;
-    if (cam && glowRoot.children.length && glowSprites[0].node.visible) {
-      for (const { node } of glowSprites) {
-        const v = [cam.eye[0] - node.position[0], cam.eye[1] - node.position[1], cam.eye[2] - node.position[2]];
-        const len = Math.hypot(v[0], v[1], v[2]) || 1;
-        node.rotation[1] = Math.atan2(v[0], v[2]);
-        node.rotation[0] = -Math.asin(v[1] / len);
-      }
+    if (!cam || !glowSprites[0]?.node.visible) return;
+    for (const { node } of glowSprites) {
+      const dx = cam.eye[0] - node.position[0];
+      const dy = cam.eye[1] - node.position[1];
+      const dz = cam.eye[2] - node.position[2];
+      const len = Math.hypot(dx, dy, dz) || 1;
+      node.rotation[1] = Math.atan2(dx, dz);
+      node.rotation[0] = -Math.asin(dy / len);
     }
-    requestAnimationFrame(faceGlowsToCamera);
   }
-  requestAnimationFrame(faceGlowsToCamera);
+  onFrame(faceGlowsToCamera);
 
   // 다른 팀원이 쓸 수 있도록 내보내기
   window.setTimeOfDay = setTimeOfDay;

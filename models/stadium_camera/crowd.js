@@ -1,12 +1,12 @@
 'use strict';
 
 // [역할 1] 관중
-// 관중석 계단마다 막대 몸 + 동그란 머리 관중을 앉히고, 무리마다 다른 리듬으로 위아래로 들썩이게 합니다.
+// 관중석 계단마다 저폴리곤 관중을 앉히고, 무리마다 다른 리듬으로 위아래로 들썩이게 합니다.
 // 파일끼리 공유하는 값은 window.STADIUM_PARTS 한 곳에 모읍니다. (다른 팀원 코드와 이름 충돌 방지)
 (function () {
-  const { MeshBuilder, outwardDirections, bowlPath, BOWL_STAND, stadiumRoot } = window.STADIUM_PARTS;
+  const { MeshBuilder, outwardDirections, bowlPath, BOWL_STAND, stadiumRoot, onFrame } = window.STADIUM_PARTS;
   // ------------------------------------------------------------------
-  // 관중: 막대 몸 + 동그란 머리. 관중석 계단 한 칸마다 앉아 있고, 각자 다른 리듬으로 위아래로 들썩임
+  // 관중: 관중석 계단 한 칸마다 앉아 있고, 각자 다른 리듬으로 위아래로 들썩임
   //   사람 수천 명을 노드 하나씩 만들면 draw 호출이 너무 많아지므로,
   //   관중을 CROWD_GROUPS개 무리로 나눠 무리마다 메시를 하나로 합칩니다. (무리 = 같은 움직임)
   //   옆 사람은 무작위로 다른 무리에 들어가기 때문에 바로 옆끼리도 움직임이 달라 보입니다.
@@ -56,53 +56,24 @@
     return samples;
   }
 
-  // 관중 한 명: 바닥 중심 base에 막대 몸(정사각 기둥) + 머리(낮은 다각형 구)
-  const BODY_W = 0.28, BODY_H = 0.75, HEAD_R = 0.14;
+  // 몸과 머리는 각각 바닥면을 뺀 상자입니다.
+  const BODY_H = 0.75;
+  const BODY_SIZE = [0.28, BODY_H, 0.28];
+  const HEAD_SIZE = [0.238, 0.238, 0.238];
+  const OPEN_BOX = { bottom: false };
   function addPerson(m, base, shirt, skin) {
     const [x, y, z] = base;
-    const h = BODY_W / 2;
-    const top = y + BODY_H;
-    const c = [x, y + BODY_H / 2, z];
-    const v = [
-      [x - h, y, z - h], [x + h, y, z - h], [x + h, y, z + h], [x - h, y, z + h],
-      [x - h, top, z - h], [x + h, top, z - h], [x + h, top, z + h], [x - h, top, z + h],
-    ];
-    const out = (face) => {
-      const cx = face.reduce((s, p) => s + p[0], 0) / 4, cz = face.reduce((s, p) => s + p[2], 0) / 4;
-      return [cx - c[0], 0, cz - c[2]];
-    };
-    m.quad(v[4], v[5], v[6], v[7], shirt, [0, 1, 0]);
-    for (const face of [[v[0], v[1], v[5], v[4]], [v[1], v[2], v[6], v[5]], [v[2], v[3], v[7], v[6]], [v[3], v[0], v[4], v[7]]]) {
-      m.quad(face[0], face[1], face[2], face[3], shirt, out(face));
-    }
-
-    // 머리: 위도 4칸 × 경도 6칸 구. 각 면의 법선은 머리 중심에서 바깥쪽
-    const hc = [x, top + HEAD_R * 0.9, z];
-    const P = (lat, lon) => [
-      hc[0] + HEAD_R * Math.sin(lat) * Math.cos(lon),
-      hc[1] + HEAD_R * Math.cos(lat),
-      hc[2] + HEAD_R * Math.sin(lat) * Math.sin(lon),
-    ];
-    const LAT = 4, LON = 6;
-    for (let i = 0; i < LAT; i++) {
-      const la0 = (i / LAT) * Math.PI, la1 = ((i + 1) / LAT) * Math.PI;
-      for (let j = 0; j < LON; j++) {
-        const lo0 = (j / LON) * 2 * Math.PI, lo1 = ((j + 1) / LON) * 2 * Math.PI;
-        const pts = i === 0 ? [P(la0, lo0), P(la1, lo0), P(la1, lo1)]
-          : i === LAT - 1 ? [P(la0, lo0), P(la1, lo0), P(la0, lo1)]
-          : [P(la0, lo0), P(la1, lo0), P(la1, lo1), P(la0, lo1)];
-        const mid = pts.reduce((s, p) => [s[0] + p[0] / pts.length, s[1] + p[1] / pts.length, s[2] + p[2] / pts.length], [0, 0, 0]);
-        m.face(pts, skin, [mid[0] - hc[0], mid[1] - hc[1], mid[2] - hc[2]]);
-      }
-    }
+    m.box(base, BODY_SIZE, shirt, OPEN_BOX);
+    m.box([x, y + BODY_H + 0.02, z], HEAD_SIZE, skin, OPEN_BOX);
   }
 
   // 관중석 한 구역(경로 + 계단 치수)에 관중을 앉힘. 사람마다 무작위 무리 번호를 받음
   function seatCrowd(builders, path, stand, closed = false) {
+    const seats = samplePath(path, SEAT_SPACING, closed);
     for (let row = 0; row < stand.rows; row++) {
       const offset = (row + 0.5) * stand.depth;           // 좌석 단 가운데
       const seatY = stand.frontWall + row * stand.rise;   // 좌석 단 높이
-      for (const { p, n } of samplePath(path, SEAT_SPACING, closed)) {
+      for (const { p, n } of seats) {
         if (random() < EMPTY_SEAT_RATE) continue;
         const jitter = (random() - 0.5) * 0.25;            // 줄 안에서 살짝 들쭉날쭉
         const t = [-n[2], 0, n[0]];                        // 경로 방향
@@ -146,13 +117,8 @@
       g.node.position[1] = g.amplitude * (0.5 + 0.5 * wave);
     }
   }
-  function crowdLoop(nowMs) {
-    animateCrowd(nowMs / 1000);
-    requestAnimationFrame(crowdLoop);
-  }
-  requestAnimationFrame(crowdLoop);
-
   // 경기장 루트 노드에 관중을 붙임
   stadiumRoot.children.push(buildCrowd());
+  onFrame(animateCrowd);
 
 })();
