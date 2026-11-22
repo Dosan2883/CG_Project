@@ -1,194 +1,205 @@
 'use strict';
 
-// [역할 1] 카메라
-// 궤도 카메라(드래그 회전·이동, 휠 줌, 키보드 이동)와 게임 시점 버튼 3~6, 시점 초기화를 만듭니다.
-// 파일끼리 공유하는 값은 window.STADIUM_PARTS 한 곳에 모읍니다. (다른 팀원 코드와 이름 충돌 방지)
+// [역할 1] 카메라 — 버튼 3~7 시점, 8 공 따라가기, 9 자유 카메라(WASD·E/C·Shift·드래그·휠), 10 멈춤
+// 모드: 'preset' / 'follow' / 'free' / 'frozen'. batter·overview 시점은 game.js가 씀.
+// 내보내기: setCameraPreset(key), getCameraMode(), resetCamera()
 (function () {
-  const { DEG, MOUND_DIST, onFrame } = window.STADIUM_PARTS;
-  // ------------------------------------------------------------------
-  // 카메라: target 주위를 도는 궤도(orbit) 카메라
-  //   - 왼쪽 드래그: 회전 / 오른쪽·Shift 드래그: 이동 / 휠: 줌
-  //   - W A S D: target을 앞뒤좌우로 이동, Q / E (또는 Space): 아래 / 위, 방향키: 회전
-  //   - Shift를 누르고 이동하면 3배 빠르게, R: 처음 시점으로
-  //   키는 e.code(물리 키 위치)로 읽어서 한글 입력 상태에서도 동작합니다.
-  // ------------------------------------------------------------------
-  const ORBIT_DEFAULT = { target: [0, 0, -45], yaw: 0, pitch: 32, dist: 120 };
-  const orbit = { ...ORBIT_DEFAULT, target: [...ORBIT_DEFAULT.target] };
-  const keys = new Set();
+  const { DEG, MOUND_DIST, FOUL, dir, fenceRadius, onFrame } = window.STADIUM_PARTS;
+
+  const EYE_MIN_Y = 0.5;                     // 카메라 최소 높이 (땅 밑 방지)
+  const FREE_SPEED = 20;                     // 자유 카메라 속도 (m/s), Shift = 3배
+  const FOLLOW_BACK = 6, FOLLOW_UP = 2;      // 공 따라가기: 공 뒤 거리, 위 높이 (m)
 
   window.ACTIVE_CAMERA = {
-    eye: [0, 0, 0], target: [0, 0, 0], up: [0, 1, 0], fov: 60 * DEG,
-    near: 0.5, far: 1500, // 멀리서도 경기장 전체와 태양(약 530m 거리)이 잘리지 않도록 far를 늘림
+    eye: [0, 0, 0], target: [0, 0, 0], up: [0, 1, 0], fov: 60 * DEG, near: 0.5, far: 1500,
   };
-
+  const cam = window.ACTIVE_CAMERA;
   const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
+  let mode = 'preset';
 
-  // 위아래 각도 범위: 음수면 카메라가 target보다 아래 → 하늘을 올려다봄
-  const PITCH_MIN = -60, PITCH_MAX = 89;
-  const EYE_MIN_Y = 0.5; // 카메라가 땅 아래로 들어가지 않는 최소 높이 (m)
-
-  // 지면 위에서의 앞 / 오른쪽 방향 (yaw만 사용, yaw = 0이면 -z = 중견수 쪽)
-  function groundAxes(yawDeg) {
-    const y = yawDeg * DEG;
-    return { forward: [-Math.sin(y), 0, -Math.cos(y)], right: [Math.cos(y), 0, -Math.sin(y)] };
-  }
-
-  // 구면 좌표 (거리, yaw, pitch) → 카메라 위치
-  //   카메라가 땅(EYE_MIN_Y)보다 아래로 내려가면, 카메라와 바라보는 점을 같은 만큼 위로 올림.
-  //   → 보는 방향은 그대로라서, 땅에 붙은 채로 고개를 들어 하늘을 보는 것처럼 됨
-  function updateCamera() {
-    const cam = window.ACTIVE_CAMERA;
-    const yaw = orbit.yaw * DEG, pitch = orbit.pitch * DEG;
-    const eye = [
-      orbit.target[0] + orbit.dist * Math.cos(pitch) * Math.sin(yaw),
-      orbit.target[1] + orbit.dist * Math.sin(pitch),
-      orbit.target[2] + orbit.dist * Math.cos(pitch) * Math.cos(yaw),
-    ];
-    const target = [...orbit.target];
-    if (eye[1] < EYE_MIN_Y) {
-      const lift = EYE_MIN_Y - eye[1];
-      eye[1] += lift;
-      target[1] += lift;
-    }
+  function setView(eye, target) {
     cam.eye = eye;
     cam.target = target;
   }
 
-  function resetCamera() {
-    Object.assign(orbit, { ...ORBIT_DEFAULT, target: [...ORBIT_DEFAULT.target] });
-    window.ACTIVE_CAMERA.fov = 60 * DEG;
-    markPresetButton(null);
-    updateCamera();
+  // yaw·pitch(도) → 바라보는 방향 (yaw 0 = 중견수 쪽 −z)
+  function lookDirection(yawDeg, pitchDeg) {
+    const y = yawDeg * DEG, p = pitchDeg * DEG;
+    return [-Math.cos(p) * Math.sin(y), Math.sin(p), -Math.cos(p) * Math.cos(y)];
   }
 
-  // ------------------------------------------------------------------
-  // 게임 시점 프리셋 (버튼 3 ~ 6)
-  //   eye = 카메라 위치, target = 바라보는 점, fov = 시야각(도). 좌표는 m, 홈플레이트 = 원점
-  //   프리셋을 고르면 궤도 카메라 값으로 바꿔서, 그 시점에서 바로 드래그·줌으로 조금씩 조정할 수 있습니다.
-  // ------------------------------------------------------------------
-  const RUBBER_Z = -MOUND_DIST; // 투수판 z (-18.44)
+  // 시점 프리셋 (좌표 m, 홈 = 원점)
+  const RUBBER_Z = -MOUND_DIST;
+  const abovePole = (side) => {              // 파울 폴(15m) 위, 살짝 바깥
+    const d = dir(side * FOUL), r = (fenceRadius(FOUL) + 0.2) * 1.04;
+    return [d[0] * r, 20, d[2] * r];
+  };
   const CAMERA_PRESETS = [
-    // 3. 투수 3인칭: 투수 뒤(중견수 쪽) 7m, 높이 4.5m에서 투수 어깨 너머로 홈플레이트를 봄
-    { key: 'pitcher', label: '3. 투수 시점', eye: [0, 4.5, RUBBER_Z - 7], target: [0, 1.0, -4], fov: 50 },
-    // 4. 타자 3인칭: 오른손 타자(3루 쪽 타석, x = -0.95) 뒤쪽 위에서 타자 어깨 너머로 투수를 봄
-    { key: 'batter', label: '4. 타자 시점', eye: [-2.2, 3.0, 5.0], target: [0, 1.4, RUBBER_Z + 4], fov: 50 },
-    // 5. 홈 뒤 하늘에서 경기장 전체를 내려다봄
-    { key: 'overview', label: '5. 전체 보기', eye: [0, 75, 60], target: [0, 0, -50], fov: 60 },
-    // 6. 내야 다이아몬드 바로 위에서 내려다봄 (수비 위치 확인용, 홈이 화면 아래)
-    { key: 'top', label: '6. 위에서', eye: [0, 75, -18.4], target: [0, 0, -19.4], fov: 55 },
+    { key: 'pitcher', button: 3, label: '3. 투수 뒤', eye: [0, 4.5, RUBBER_Z - 7], target: [0, 1.0, -4], fov: 50 },
+    { key: 'catcher', button: 4, label: '4. 포수 뒤', eye: [1.2, 1.9, 3.4], target: [0, 1.2, RUBBER_Z], fov: 50 }, // 포수 오른쪽 뒤
+    { key: 'net', button: 5, label: '5. 네트 위', eye: [0, 13, 20], target: [0, 0, -22], fov: 55 },
+    { key: 'rightPole', button: 6, label: '6. 오른쪽 폴대', eye: abovePole(1), target: [0, 0, -20], fov: 50 },
+    { key: 'leftPole', button: 7, label: '7. 왼쪽 폴대', eye: abovePole(-1), target: [0, 0, -20], fov: 50 },
+    { key: 'batter', eye: [-2.2, 3.0, 5.0], target: [0, 1.4, RUBBER_Z + 4], fov: 50 },
+    { key: 'overview', eye: [0, 75, 60], target: [0, 0, -50], fov: 60 },
   ];
 
-  function markPresetButton(key) {
-    for (const preset of CAMERA_PRESETS) {
-      const button = document.getElementById(`cameraPreset_${preset.key}`);
-      if (button) button.classList.toggle('active', preset.key === key);
-    }
+  // 프리셋 = target 주위를 도는 궤도 카메라 (드래그 회전·휠 줌)
+  const orbit = { target: [0, 0, 0], yaw: 0, pitch: 0, dist: 1 };
+  function updateOrbitCamera() {
+    const d = lookDirection(orbit.yaw, orbit.pitch);
+    const eye = orbit.target.map((t, i) => t - d[i] * orbit.dist);
+    const target = [...orbit.target];
+    const lift = Math.max(0, EYE_MIN_Y - eye[1]); // 땅 밑이면 카메라·보는 점을 같이 올림
+    eye[1] += lift;
+    target[1] += lift;
+    setView(eye, target);
+  }
+
+  function markButton(number) {
+    document.querySelectorAll('[data-camera-button]').forEach((b) => {
+      b.classList.toggle('active', Number(b.dataset.cameraButton) === number);
+    });
   }
 
   function setCameraPreset(key) {
     const preset = CAMERA_PRESETS.find((p) => p.key === key);
     if (!preset) return;
-    // eye·target → 궤도 카메라의 target / 거리 / yaw / pitch로 변환
-    const v = [preset.eye[0] - preset.target[0], preset.eye[1] - preset.target[1], preset.eye[2] - preset.target[2]];
-    const dist = Math.hypot(v[0], v[1], v[2]);
+    const v = preset.target.map((t, i) => t - preset.eye[i]);
+    orbit.dist = Math.hypot(...v);
     orbit.target = [...preset.target];
-    orbit.dist = dist;
-    orbit.yaw = Math.atan2(v[0], v[2]) / DEG;
-    orbit.pitch = clamp(Math.asin(v[1] / dist) / DEG, PITCH_MIN, PITCH_MAX);
-    window.ACTIVE_CAMERA.fov = preset.fov * DEG;
-    markPresetButton(key);
-    updateCamera();
+    orbit.yaw = Math.atan2(-v[0], -v[2]) / DEG;
+    orbit.pitch = clamp(Math.asin(v[1] / orbit.dist) / DEG, -89, 60);
+    cam.fov = preset.fov * DEG;
+    mode = 'preset';
+    markButton(preset.button ?? null);
+    updateOrbitCamera();
   }
-  window.CAMERA_PRESETS = CAMERA_PRESETS;
-  window.setCameraPreset = setCameraPreset;
-  window.resetCamera = resetCamera;
-  updateCamera();
 
-  // 매 프레임 눌린 키만큼 이동 (프레임 시간 dt를 곱해 속도가 일정하게)
-  function updateKeyboardCamera(timeSec, dt) {
-    if (keys.size > 0) {
-      const boost = keys.has('ShiftLeft') || keys.has('ShiftRight') ? 3 : 1;
-      const axis = (plus, minus) => (keys.has(plus) ? 1 : 0) - (keys.has(minus) ? 1 : 0);
-      const moveF = axis('KeyW', 'KeyS'), moveR = axis('KeyD', 'KeyA');
-      const moveU = axis('KeyE', 'KeyQ') + (keys.has('Space') ? 1 : 0);
-
-      const speed = Math.max(orbit.dist, 10) * 0.6 * boost * dt; // 멀리 있을수록 빠르게
-      const { forward, right } = groundAxes(orbit.yaw);
-      for (let i = 0; i < 3; i++) orbit.target[i] += (forward[i] * moveF + right[i] * moveR) * speed;
-      orbit.target[1] = clamp(orbit.target[1] + moveU * speed, 0, 80);
-      orbit.yaw += axis('ArrowLeft', 'ArrowRight') * 90 * dt;
-      orbit.pitch = clamp(orbit.pitch + axis('ArrowUp', 'ArrowDown') * 60 * dt, PITCH_MIN, PITCH_MAX);
-      updateCamera();
+  // 8. 공 따라가기: 공이 움직이는 순간부터 진행 방향 뒤쪽 위에서 부드럽게(1 − e^(−k·dt)) 추적
+  const follow = { prev: null, dir: [0, 0, 1], started: false };
+  function startFollow() {
+    const ball = window.PITCHER_BATTER?.ball;
+    if (!ball) return;
+    Object.assign(follow, { prev: [...ball.position], dir: [0, 0, 1], started: false });
+    mode = 'follow';
+    markButton(8);
+  }
+  function updateFollow(dt) {
+    const ball = window.PITCHER_BATTER?.ball;
+    if (!ball || dt <= 0) return;
+    const p = ball.position;
+    const v = p.map((x, i) => x - follow.prev[i]);
+    const moved = Math.hypot(...v);
+    follow.prev = [...p];
+    if (moved / dt > 1) {                    // 초속 1m 이상 = 날아가는 중
+      follow.dir = v.map((x) => x / moved);
+      if (!follow.started) { follow.started = true; cam.fov = 55 * DEG; }
     }
+    if (!follow.started) return;
+    const want = [p[0] - follow.dir[0] * FOLLOW_BACK, Math.max(EYE_MIN_Y, p[1] + FOLLOW_UP), p[2] - follow.dir[2] * FOLLOW_BACK];
+    const kEye = 1 - Math.exp(-6 * dt), kTarget = 1 - Math.exp(-12 * dt);
+    setView(cam.eye.map((e, i) => e + (want[i] - e) * kEye), cam.target.map((t, i) => t + (p[i] - t) * kTarget));
   }
-  onFrame(updateKeyboardCamera, { first: true }); // 빛 번짐 판을 돌리기 전에 카메라를 갱신
 
-  const MOVE_KEYS = new Set(['KeyW', 'KeyA', 'KeyS', 'KeyD', 'KeyQ', 'KeyE', 'Space', 'ShiftLeft', 'ShiftRight',
-    'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight']);
+  // 9. 자유 카메라 (Q는 게임 키라 안 씀) / 10. 멈춤
+  const free = { eye: [0, 8, -45], yaw: 180, pitch: -10 };
+  function updateFreeCamera() {
+    const f = lookDirection(free.yaw, free.pitch);
+    setView([...free.eye], free.eye.map((e, i) => e + f[i]));
+  }
+  function moveFree(forward, right, up) {
+    const f = lookDirection(free.yaw, free.pitch);
+    const yaw = free.yaw * DEG, r = [Math.cos(yaw), 0, -Math.sin(yaw)];
+    for (let i = 0; i < 3; i++) free.eye[i] += f[i] * forward + r[i] * right;
+    free.eye[1] = Math.max(EYE_MIN_Y, free.eye[1] + up);
+    updateFreeCamera();
+  }
+  function startFree() {
+    Object.assign(free, { eye: [0, 8, -45], yaw: 180, pitch: -10 }); // 경기장 가운데에서 홈 쪽
+    cam.fov = 60 * DEG;
+    mode = 'free';
+    markButton(9);
+    updateFreeCamera();
+  }
+  function freezeCamera() {
+    if (mode !== 'free' && mode !== 'follow') return;
+    mode = 'frozen';
+    markButton(10);
+  }
+
+  // 입력
+  const keys = new Set();
+  const FREE_KEYS = new Set(['KeyW', 'KeyA', 'KeyS', 'KeyD', 'KeyE', 'KeyC', 'ShiftLeft', 'ShiftRight']);
   window.addEventListener('keydown', (e) => {
-    if (e.target && /^(INPUT|TEXTAREA|SELECT)$/.test(e.target.tagName)) return;
-    if (MOVE_KEYS.has(e.code)) {
-      keys.add(e.code);
-      if (e.code.startsWith('Arrow') || e.code === 'Space') e.preventDefault(); // 페이지 스크롤 방지
-    }
-    if (e.code === 'KeyR' && !e.repeat) resetCamera();
+    if (FREE_KEYS.has(e.code) && !/^(INPUT|TEXTAREA|SELECT)$/.test(e.target?.tagName)) keys.add(e.code);
   });
   window.addEventListener('keyup', (e) => keys.delete(e.code));
-  window.addEventListener('blur', () => keys.clear()); // 창을 벗어나면 눌린 키 초기화
+  window.addEventListener('blur', () => keys.clear());
+
+  onFrame((timeSec, dt) => {
+    if (mode === 'follow') updateFollow(dt);
+    if (mode === 'free' && keys.size > 0) {
+      const axis = (plus, minus) => (keys.has(plus) ? 1 : 0) - (keys.has(minus) ? 1 : 0);
+      const step = FREE_SPEED * (keys.has('ShiftLeft') || keys.has('ShiftRight') ? 3 : 1) * dt;
+      moveFree(axis('KeyW', 'KeyS') * step, axis('KeyD', 'KeyA') * step, axis('KeyE', 'KeyC') * step);
+    }
+  }, { first: true }); // 빛 번짐 판보다 먼저 갱신
 
   const canvas = document.getElementById('glCanvas');
   if (canvas) {
     let drag = null;
     canvas.style.touchAction = 'none';
-    canvas.addEventListener('contextmenu', (e) => e.preventDefault());
     canvas.addEventListener('pointerdown', (e) => {
-      drag = { x: e.clientX, y: e.clientY, pan: e.button === 2 || e.shiftKey };
+      drag = { x: e.clientX, y: e.clientY };
       canvas.setPointerCapture(e.pointerId);
     });
     canvas.addEventListener('pointermove', (e) => {
       if (!drag) return;
       const dx = e.clientX - drag.x, dy = e.clientY - drag.y;
-      drag.x = e.clientX;
-      drag.y = e.clientY;
-
-      if (drag.pan) {
-        // 화면을 잡아 끄는 느낌으로 target을 지면 위에서 이동
-        const speed = orbit.dist * 0.0015;
-        const { forward, right } = groundAxes(orbit.yaw);
-        for (let i = 0; i < 3; i++) orbit.target[i] += (-right[i] * dx + forward[i] * dy) * speed;
-      } else {
+      drag = { x: e.clientX, y: e.clientY };
+      if (mode === 'preset') {
         orbit.yaw -= dx * 0.3;
-        orbit.pitch = clamp(orbit.pitch + dy * 0.3, PITCH_MIN, PITCH_MAX);
+        orbit.pitch = clamp(orbit.pitch - dy * 0.3, -89, 60);
+        updateOrbitCamera();
+      } else if (mode === 'free') {
+        free.yaw -= dx * 0.2;
+        free.pitch = clamp(free.pitch - dy * 0.2, -89, 89);
+        updateFreeCamera();
       }
-      updateCamera();
     });
     canvas.addEventListener('pointerup', () => { drag = null; });
     canvas.addEventListener('wheel', (e) => {
+      if (mode !== 'preset' && mode !== 'free') return;
       e.preventDefault();
+      if (mode === 'free') return moveFree(-e.deltaY * 0.05, 0, 0);
       orbit.dist = clamp(orbit.dist * Math.exp(e.deltaY * 0.001), 1.5, 400);
-      updateCamera();
+      updateOrbitCamera();
     }, { passive: false });
   }
 
+  // 버튼 3 ~ 10
   const controlGroup = document.querySelector('.controls .control-group');
   if (controlGroup) {
-    // 시점 프리셋 버튼 3 ~ 6 (버튼 줄 맨 앞, 번호 순서대로)
-    const presetButtons = CAMERA_PRESETS.map((preset) => {
+    const makeButton = (number, label, onClick) => {
       const button = document.createElement('button');
       button.type = 'button';
-      button.id = `cameraPreset_${preset.key}`;
-      button.textContent = preset.label;
-      button.addEventListener('click', () => setCameraPreset(preset.key));
+      button.dataset.cameraButton = String(number);
+      button.textContent = label;
+      button.addEventListener('click', () => { onClick(); button.blur(); });
       return button;
-    });
-    controlGroup.prepend(...presetButtons);
-
-    // 시점 초기화 버튼 (맨 뒤)
-    const resetButton = document.createElement('button');
-    resetButton.type = 'button';
-    resetButton.textContent = '시점 초기화 (R)';
-    resetButton.addEventListener('click', resetCamera);
-    controlGroup.append(resetButton);
+    };
+    controlGroup.prepend(
+      ...CAMERA_PRESETS.filter((p) => p.button).map((p) => makeButton(p.button, p.label, () => setCameraPreset(p.key))),
+      makeButton(8, '8. 공 따라가기', startFollow),
+      makeButton(9, '9. 자유 카메라', startFree),
+      makeButton(10, '10. 카메라 멈춤', freezeCamera),
+    );
   }
 
+  window.CAMERA_PRESETS = CAMERA_PRESETS;
+  window.setCameraPreset = setCameraPreset;
+  window.resetCamera = () => setCameraPreset('overview');
+  window.getCameraMode = () => mode;
+  setCameraPreset('overview');
 })();
