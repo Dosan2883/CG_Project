@@ -8,10 +8,9 @@
   const pb = window.PITCHER_BATTER;
   if (!G || !pb) return;
   const { RULES, ZONES, ZONE, rand, randInt, weighted, wait, buttonToZone, cellName, ballTarget } = G;
-  const { paintZones, startSwing, cheer, flashScoreboard, flashLights, hitFlight, resetBall, hideBall, toast, log, render } = G;
+  const { SWING_LEAD, paintZones, startSwing, cheer, flashScoreboard, flashLights, hitFlight, resetBall, hideBall, toast, log, render } = G;
   const fielders = window.FIELDERS; // fielders.js (포수·심판·야수)
 
-  const ME_COLOR = [40, 100, 220], CPU_COLOR = [220, 60, 60];
   // 한 번의 투구가 끝난 뒤: 결과 문구를 보여 주는 시간 → 공을 숨긴 뒤 다음 입력까지 쉬는 시간 (밀리초)
   const RESULT_SHOW_MS = 1000;
   const AFTER_HIDE_MS = 400;
@@ -23,41 +22,66 @@
   function newGame() {
     Object.assign(state, {
       inning: 1,
-      half: 'top',               // top = CPU 공격(내가 수비), bottom = 내가 공격
+      half: 'top',               // top = 회 초(선공 팀 공격), bottom = 회 말(후공 팀 공격)
+      order: null,               // 'offense' = 내가 선공(초에 공격), 'defense' = 내가 후공(초에 수비)
+      choosing: true,            // 경기 시작 전 (타이틀·팀 고르기 화면)
+      teams: null,               // { me: 'deokjin' | 'wansan', cpu: 나머지 } (rules.js의 TEAMS 키)
       score: { cpu: 0, me: 0 },
+      hits: { cpu: 0, me: 0 },   // 안타 수 (1루타·2루타·홈런, 전광판 H 칸)
       line: { cpu: Array(RULES.innings).fill(null), me: Array(RULES.innings).fill(null) },
       balls: 0, strikes: 0, outs: 0,
       bases: [false, false, false],
       busy: false,               // 투구 중에는 입력을 막음
       over: false,
-      batMode: 'choose',         // 말 공격: choose(휘두를지 고르기) / aim(칸 고르기)
       lastPitchButton: 1,
-      // 내 습관 기록: 칸별로 몇 번 던졌는지 / 휘둘렀는지 (CPU가 읽음)
-      habit: { pitch: Array(ZONE.count).fill(0), swing: Array(ZONE.count).fill(0) },
+      // 내 습관 기록: 칸별로 몇 번 던졌는지 (CPU 타자가 읽음)
+      habit: { pitch: Array(ZONE.count).fill(0) },
       cpuRead: false,            // 이번 투구에서 CPU가 습관을 읽었는지 (결과 메시지용)
+      // 내 타격(타이밍): ready(투구 받기 대기) → windup(투수 준비) → pitch(공 날아옴, 스윙 가능) → result
+      batPhase: 'ready',
+      swingWindow: null,         // 지금 투구의 타이밍 정보 { start, arrival, ideal, press }
+      lastSwing: null,           // 마지막 스윙 결과 (타이밍 바 표시용) { ...swingWindow, error, window }
     });
     resetBall();
     paintZones();
+    log('게임 시작 버튼을 눌러 주세요.');
+    render();
+    G.onNewGame?.(); // intro.js: 타이틀 화면 띄우기
+  }
+
+  // 팀을 고르면 1회초 시작. 선공/후공은 팀이 정함 (덕진 = 후공, 완산 = 선공)
+  function startGame(myTeam) {
+    if (!state.choosing) return;
+    const cpuTeam = Object.keys(G.TEAMS).find((key) => key !== myTeam);
+    state.teams = { me: myTeam, cpu: cpuTeam };
+    state.order = G.TEAMS[myTeam].order;
+    state.choosing = false;
     startHalf();
   }
 
-  const battingTeam = () => (state.half === 'top' ? 'cpu' : 'me');
-  const homeCamera = () => (state.half === 'top' ? 'pitcher' : 'batter');
+  // 누가 공격하는지: 내가 선공이면 회 초에, 후공이면 회 말에 내가 공격
+  const meBatsFirst = () => state.order === 'offense';
+  const playerBatting = () => !state.choosing && (state.half === 'top') === meBatsFirst();
+  const battingTeam = () => (playerBatting() ? 'me' : 'cpu');
+  const homeTeam = () => (meBatsFirst() ? 'cpu' : 'me'); // 후공(회 말에 공격하는) 팀
+  const awayTeam = () => (meBatsFirst() ? 'me' : 'cpu');
+  const homeCamera = () => (playerBatting() ? 'batter' : 'pitcher');
+  const battingTeamKey = () => state.teams?.[battingTeam()]; // 공격 중인 팀 ('deokjin' | 'wansan')
 
   function startHalf() {
     state.balls = state.strikes = state.outs = 0;
     state.bases = [false, false, false];
-    state.batMode = 'choose';
     const line = state.line[battingTeam()];
     if (line[state.inning - 1] == null) line[state.inning - 1] = 0;
-    // 공격 팀 색: CPU 빨강, 나 파랑 (투수·수비수는 반대 팀 색)
-    pb.batter.color = state.half === 'top' ? CPU_COLOR : ME_COLOR;
-    pb.pitcher.color = state.half === 'top' ? ME_COLOR : CPU_COLOR;
-    fielders?.setTeamColor(pb.pitcher.color);
+    state.batPhase = 'ready';
+    state.lastSwing = null;
+    // 유니폼: 타자 = 공격 팀, 투수·포수·야수 = 수비 팀 (팀 색 + 모자·가슴 엠블럼, uniforms.js)
+    G.dressTeams?.(battingTeamKey(), state.teams[battingTeam() === 'me' ? 'cpu' : 'me']);
+    G.setZoneSplit?.(!playerBatting()); // 내가 수비할 때만 3칸, 공격할 때는 한 판
     fielders?.resetFielders();
     window.setCameraPreset?.(homeCamera());
-    toast(`${state.inning}회${state.half === 'top' ? '초 · 수비' : '말 · 공격'}`, '#9ecbff');
-    log(state.half === 'top' ? '수비: 던질 칸을 고르세요.' : '공격: 배트를 휘두를지 고르세요.');
+    toast(`${state.inning}회${state.half === 'top' ? '초' : '말'} · ${playerBatting() ? '공격' : '수비'}`, '#9ecbff');
+    log(playerBatting() ? '공격: "투구 받기"(Enter)를 누르고, 공이 오면 타이밍에 맞춰 스윙(F)!' : '수비: 던질 칸을 고르세요.');
     render();
   }
 
@@ -113,8 +137,8 @@
     state.busy = true;
     render();
 
-    const playerIsPitcher = state.half === 'top';
-    paintZones(playerIsPitcher ? { [pitchZone]: 'mine' } : swingZone != null ? { [swingZone]: 'mine' } : {});
+    const playerIsPitcher = !playerBatting();
+    paintZones(playerIsPitcher ? { [pitchZone]: 'mine' } : {}); // 공격할 때는 칸을 고르지 않으므로 표시 없음
 
     // 안 휘두르면 스트라이크/볼을 던지기 전에 정함 → 볼이면 고른 칸 바로 바깥으로 살짝 빗나감
     const takeCall = swingZone == null ? weighted(RULES.takeOdds) : null;
@@ -135,14 +159,17 @@
       marks[pitchZone] = 'cpu';
       if (swingZone != null) marks[swingZone] = 'mine';
     }
-    const contact = swingZone != null && swingZone === pitchZone;
+    // CPU 타자: 칸이 맞으면 공을 침. 칸이 틀려도 cpuExtraContactChance 확률로 배트에 맞힘
+    const contact = swingZone != null &&
+      (swingZone === pitchZone || (playerIsPitcher && rand() < RULES.cpuExtraContactChance));
     if (contact) marks[pitchZone] = 'hit';
     paintZones(marks);
 
     const who = playerIsPitcher ? `투구 ${cellName(pitchZone)}` : `상대 투구 ${cellName(pitchZone)}`;
     // CPU가 내 습관을 읽고 고른 경우 표시
-    const readTag = state.cpuRead ? (playerIsPitcher ? ' (CPU가 노림수!)' : ' (CPU가 습관을 읽고 피함!)') : '';
-    const swingText = (swingZone == null ? '타자 안 휘두름' : `스윙 ${cellName(swingZone)}`) + readTag;
+    const readTag = playerIsPitcher && state.cpuRead ? ' (CPU가 노림수!)' : '';
+    const swingText = swingZone == null ? '타자 안 휘두름'
+      : playerIsPitcher ? `스윙 ${cellName(swingZone)}${readTag}` : '스윙';
 
     if (swingZone == null) {
       if (takeCall === 'strike') await addStrike(`${who} · ${swingText} → 스트라이크`);
@@ -153,19 +180,104 @@
       await ballInPlay(`${who} · ${swingText} → 맞혔다!`);
     }
 
-    // 마무리 순서: ① 결과 문구를 보여 줌 → ② 공을 숨김 → ③ 잠깐 뒤 다음 입력(투구·타격)을 받음
-    if (!state.over) {
-      await wait(RESULT_SHOW_MS);
-      hideBall(); // 스트라이크·볼·파울·안타·홈런 모두 끝나면 공을 숨김
-      fielders?.resetMitt();
-      fielders?.resetFielders();
-      paintZones();
-      await wait(AFTER_HIDE_MS);
-      if (state.over) return;
-      state.busy = false;
-      state.batMode = 'choose';
+    await finishPlay();
+  }
+
+  // 투구 한 번의 마무리: ① 결과 문구를 보여 줌 → ② 공을 숨김 → ③ 잠깐 뒤 다음 입력(투구·타격)을 받음
+  async function finishPlay() {
+    if (state.over) return;
+    await wait(RESULT_SHOW_MS);
+    hideBall(); // 스트라이크·볼·파울·안타·홈런 모두 끝나면 공을 숨김
+    fielders?.resetMitt();
+    fielders?.resetFielders();
+    paintZones();
+    await wait(AFTER_HIDE_MS);
+    if (state.over) return;
+    state.busy = false;
+    state.batPhase = 'ready';
+    render();
+  }
+
+  // ------------------------------------------------------------------
+  // 3-2) 내 타격: 타이밍 맞춰 치기
+  //   "투구 받기" → windupMs 뒤 CPU가 3칸 중 아무 데나 던짐 (속도는 pitchTime 범위에서 무작위)
+  //   공이 날아오는 동안 스윙(F)을 누르면, 배트가 공 위치를 지나는 시각과 공 도착 시각의 차이로 결과가 정해짐
+  // ------------------------------------------------------------------
+  const B = RULES.batting;
+  const lastWindow = () => B.windows[B.windows.length - 1].within;
+
+  async function requestPitch() {
+    if (state.busy || state.over || !playerBatting()) return;
+    state.busy = true;
+    state.batPhase = 'windup';
+    state.lastSwing = null;
+    paintZones();
+    log('상대 투수가 던질 준비를 해요…');
+    render();
+    await wait(B.windupMs);
+    if (state.over) return;
+
+    const pitchZone = randInt(ZONE.count);
+    const takeCall = weighted(RULES.takeOdds); // 스윙하지 않았을 때의 판정 (볼이면 존 바깥으로 빗나감)
+    const target = takeCall === 'ball' ? ballTarget(pitchZone) : ZONES[pitchZone].target;
+    const [minTime, maxTime] = B.pitchTime;
+    const travel = minTime + rand() * (maxTime - minTime);
+    const start = G.nowSec();
+    state.swingWindow = { start, arrival: start + travel, ideal: start + travel - SWING_LEAD, press: null, zone: pitchZone };
+    state.batPhase = 'pitch';
+    log('공이 온다! 타이밍에 맞춰 스윙 (F)');
+    render();
+    pb.triggerPitch(target, travel);
+    fielders?.catchAt(target, travel * 0.8);
+
+    // 공이 도착하고, 늦게 누를 수 있는 시간까지 기다림
+    await wait((travel + lastWindow() + 0.05) * 1000);
+    const w = state.swingWindow;
+    state.swingWindow = null;
+    state.batPhase = 'result';
+    await resolveSwing(w, takeCall, pitchZone);
+    await finishPlay();
+  }
+
+  // 스윙 버튼(F): 공이 날아오는 동안 한 번만. 누른 순간 배트를 휘두름
+  function pressSwing() {
+    const w = state.swingWindow;
+    if (state.batPhase !== 'pitch' || !w || w.press != null) return;
+    w.press = G.nowSec();
+    startSwing(w.zone, SWING_LEAD); // 누른 뒤 SWING_LEAD초에 배트가 공 위치를 지남
+    render();
+  }
+
+  async function resolveSwing(w, takeCall, pitchZone) {
+    const who = `상대 투구 ${cellName(pitchZone)}`;
+    if (w.press == null) { // 스윙 안 함 → 스트라이크/볼
+      state.lastSwing = { ...w, error: null, window: null };
       render();
+      paintZones({ [pitchZone]: 'cpu' });
+      if (takeCall === 'strike') await addStrike(`${who} · 스윙 안 함 → 스트라이크`);
+      else await addBall(`${who} · 스윙 안 함 → 볼`);
+      return;
     }
+    const error = w.press + SWING_LEAD - w.arrival; // 음수 = 빠름, 양수 = 늦음
+    const hit = B.windows.find((win) => Math.abs(error) <= win.within) ?? null;
+    state.lastSwing = { ...w, error, window: hit };
+    render();
+    const ms = Math.round(Math.abs(error) * 1000);
+    const timingText = hit?.key === 'perfect' ? `${hit.label}` : `${error < 0 ? '빨랐어요' : '늦었어요'} ${ms}ms`;
+    paintZones({ [pitchZone]: hit ? 'hit' : 'cpu' });
+    if (!hit) {
+      await addStrike(`${who} · 스윙 (${timingText}) → 헛스윙 스트라이크`);
+      return;
+    }
+    const kind = weighted(hit.odds);
+    const swingText = `${who} · 스윙 (${hit.label}, ${error < 0 ? '-' : '+'}${ms}ms)`;
+    if (kind === 'strike') { // 타이밍은 근처였지만 배트에 안 맞음
+      paintZones({ [pitchZone]: 'cpu' });
+      await addStrike(`${swingText} → 헛스윙 스트라이크`);
+      return;
+    }
+    toast(hit.label, '#ffe27a', 900);
+    await ballInPlay(`${swingText} → 맞혔다!`, kind);
   }
 
   async function addStrike(message) {
@@ -213,9 +325,9 @@
   }
 
   // 공을 맞혔을 때: 파울 / 1루타 / 2루타 / 홈런
-  async function ballInPlay(message) {
+  //   kind를 주지 않으면 RULES.hitOdds로 뽑음 (CPU 타자), 내 타격은 타이밍 결과로 정한 kind를 넘김
+  async function ballInPlay(message, kind = weighted(RULES.hitOdds)) {
     cheer(0.8, 2.2); // 공을 친 순간 함성
-    const kind = weighted(RULES.hitOdds);
     const names = { foul: '파울', single: '1루타', double: '2루타', homerun: '홈런' };
 
     if (kind === 'foul') {
@@ -236,6 +348,7 @@
       await hitFlight('homerun');
       await wait(600);
       window.setCameraPreset?.(homeCamera());
+      state.hits[battingTeam()]++;
       const runs = advance(4);
       log(`${message} 홈런!! ${runs}점 득점!`);
       toast(`홈런!!! ${runs}점`, '#ffb347');
@@ -258,6 +371,7 @@
       cheer(1.0, 2.2); // 타자 아웃 함성
       await addOut();
     } else {
+      state.hits[battingTeam()]++;
       const runs = advance(kind === 'single' ? 1 : 2);
       log(`${message} ${names[kind]}!${runsText(runs)}`);
       toast(`${names[kind]}!${runsText(runs)}`, '#8affb0');
@@ -269,19 +383,21 @@
   // ------------------------------------------------------------------
   // 4) 공수 교대와 경기 종료
   // ------------------------------------------------------------------
-  // 5회말에 내가 앞서면 바로 경기 끝 (끝내기)
+  // 마지막 회 말에 후공 팀이 앞서면 바로 경기 끝 (끝내기)
   async function checkWalkOff() {
-    if (state.half === 'bottom' && state.inning === RULES.innings && state.score.me > state.score.cpu) {
+    const home = homeTeam(), away = awayTeam();
+    if (state.half === 'bottom' && state.inning === RULES.innings && state.score[home] > state.score[away]) {
       await wait(1200);
-      endGame('끝내기 승리!');
+      endGame(home === 'me' ? '끝내기 승리!' : '끝내기 패배');
     }
   }
 
   async function endHalf() {
     if (state.half === 'top') {
-      // 5회초가 끝났는데 내가 이미 앞서면 5회말은 하지 않음
-      if (state.inning === RULES.innings && state.score.me > state.score.cpu) {
-        state.line.me[state.inning - 1] = 'X';
+      // 마지막 회 초가 끝났는데 후공 팀이 이미 앞서면 마지막 회 말은 하지 않음
+      const home = homeTeam();
+      if (state.inning === RULES.innings && state.score[home] > state.score[awayTeam()]) {
+        state.line[home][state.inning - 1] = 'X';
         endGame();
         return;
       }
@@ -311,9 +427,10 @@
   }
 
   // ------------------------------------------------------------------
-  // 5) CPU 두뇌: 평소엔 아무 칸이나 고르지만, cpuReadChance 확률로 내 습관을 읽음
-  //   CPU 타자: 내가 가장 많이 던진 칸에 휘두름
-  //   CPU 투수: 내가 가장 많이 휘두른 칸을 피해서 던짐
+  // 5) CPU 두뇌
+  //   CPU 타자: 평소엔 아무 칸에나 휘두르지만, cpuReadChance 확률로 내가 가장 많이 던진 칸에 휘두름
+  //            칸이 틀려도 cpuExtraContactChance 확률로 공을 맞힘
+  //   CPU 투수: 3칸 중 아무 데나 던짐 (내 타격은 타이밍으로 정해지므로 읽을 습관이 없음)
   //   기록이 cpuReadMinSamples보다 적으면 아직 읽지 못함. 기록은 경기마다 새로 시작
   // ------------------------------------------------------------------
   function favoriteZone(counts) {
@@ -331,19 +448,11 @@
     return fav ?? randInt(ZONE.count);
   }
 
-  function cpuPitchZone() {
-    const fav = rand() < RULES.cpuReadChance ? favoriteZone(state.habit.swing) : null;
-    state.cpuRead = fav != null;
-    if (fav == null) return randInt(ZONE.count);
-    const others = ZONES.map((_, i) => i).filter((i) => i !== fav);
-    return others[randInt(others.length)];
-  }
-
   // ------------------------------------------------------------------
   // 6) 플레이어 입력 (ui.js 버튼과 Q 키가 부름)
   // ------------------------------------------------------------------
   function onPitchButton(button) {
-    if (state.busy || state.over || state.half !== 'top') return;
+    if (state.busy || state.over || state.choosing || playerBatting()) return;
     state.lastPitchButton = button;
     const pitchZone = buttonToZone(button);
     state.cpuRead = false;
@@ -352,26 +461,18 @@
     playPitch(pitchZone, swingZone);
   }
 
-  function onSwingButton(button) {
-    if (state.busy || state.over || state.half !== 'bottom') return;
-    const swingZone = buttonToZone(button);
-    const pitchZone = cpuPitchZone(); // 이번 스윙을 기록하기 전에 정함 (미리 보고 피하지 않도록)
-    state.habit.swing[swingZone]++;
-    playPitch(pitchZone, swingZone);
-  }
-
-  function onTake() {
-    if (state.busy || state.over || state.half !== 'bottom') return;
-    playPitch(cpuPitchZone(), null);
-  }
-
-  // Q 키(한글 입력 상태에서도 동작하도록 e.code 사용): 마지막 칸으로 다시 던지기
+  // 키보드 (한글 입력 상태에서도 동작하도록 e.code 사용)
+  //   Q: 마지막 칸으로 다시 던지기(수비) / Enter: 투구 받기(공격) / F: 스윙(공격)
+  //   Space는 카메라 위로 이동에 쓰여서 스윙 키로 쓰지 않음
   window.addEventListener('keydown', (e) => {
     if (e.target && /^(INPUT|TEXTAREA|SELECT)$/.test(e.target.tagName)) return;
-    if (e.code === 'KeyQ' && !e.repeat) onPitchButton(state.lastPitchButton);
+    if (e.repeat) return;
+    if (e.code === 'KeyQ') onPitchButton(state.lastPitchButton);
+    else if (e.code === 'Enter' || e.code === 'NumpadEnter') { e.preventDefault(); requestPitch(); }
+    else if (e.code === 'KeyF') pressSwing();
   });
 
-  Object.assign(G, { state, newGame, onPitchButton, onSwingButton, onTake });
+  Object.assign(G, { state, newGame, startGame, playerBatting, awayTeam, homeTeam, battingTeamKey, onPitchButton, requestPitch, pressSwing });
 
   // 카메라·조명 스크립트가 준비된 뒤 시작 (app.js가 첫 프레임을 그리기 전)
   newGame();

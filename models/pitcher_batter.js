@@ -59,14 +59,17 @@
   const PITCH_DURATION = 0.55; // 투구 비행 시간 (초)
   const PITCH_ARC = 0.45;      // 포물선 최고점 추가 높이 (m)
   let isPitching = false;
-  let pitchElapsed = 0;
-  let pitchEnd = [...BALL_END]; // 이번 투구의 도착점 (game_controller.js가 고른 칸)
+  let pitchStart = 0;             // 투구 시작 시각 (초, performance.now 기준)
+  let pitchTime = PITCH_DURATION; // 이번 투구의 비행 시간 (초)
+  let pitchEnd = [...BALL_END]; // 이번 투구의 도착점 (game/game.js가 고른 칸)
 
   // target: 도착점 [x, y, z] (생략하면 기본 스트라이크존 중앙)
-  // Q 키 입력은 game_controller.js에서 받아서, 고른 칸을 target으로 넘겨 호출합니다.
-  function triggerPitch(target) {
+  // duration: 비행 시간(초, 생략하면 PITCH_DURATION). 타이밍 타격에서는 공 속도를 바꿔 가며 씀
+  // Q 키 입력은 game/game.js에서 받아서, 고른 칸을 target으로 넘겨 호출합니다.
+  function triggerPitch(target, duration = PITCH_DURATION) {
     isPitching = true;
-    pitchElapsed = 0;
+    pitchStart = performance.now() / 1000;
+    pitchTime = duration;
     pitchEnd = target ? [...target] : [...BALL_END];
     ballNode.position = [...BALL_START];
     ballNode.visible = true;
@@ -78,8 +81,8 @@
     if (typeof prevUpdate === 'function') prevUpdate(timeSec, dt);
     if (!isPitching) return;
 
-    pitchElapsed += dt;
-    const t = Math.min(pitchElapsed / PITCH_DURATION, 1); // 0.0(출발) ~ 1.0(도착) 진행률
+    // 실제 시각 기준 진행률 (프레임이 끊겨도 정확히 pitchTime초 뒤에 도착 → 타이밍 판정과 맞음)
+    const t = Math.min((performance.now() / 1000 - pitchStart) / pitchTime, 1); // 0.0(출발) ~ 1.0(도착) 진행률
 
     // 직선 보간(lerpVec3) + 포물선 높이(4 * t * (1 - t)) 결합
     const pos = lerpVec3(BALL_START, pitchEnd, t);

@@ -27,13 +27,38 @@
     castShadow: false,
     fog: false,
   }));
+  // 합친 존: 내가 공격할 때는 칸을 고르지 않으므로 3칸 대신 존 전체를 판 하나로 보여 줌
+  const zoneWhole = {
+    id: 'zone_whole',
+    primitive: 'box',
+    position: [0, (ZONE.top + ZONE.bottom) / 2, ZONE.z],
+    meshScale: [ZONE.width - 0.008, ZONE.top - ZONE.bottom - 0.008, 0.01],
+    color: ZONE_COLORS.base,
+    emissive: true,
+    blend: 'alpha',
+    opacity: 0.15,
+    castShadow: false,
+    fog: false,
+    visible: false,
+  };
+  // split = true: 3칸(수비할 때), false: 한 판(공격할 때)
+  function setZoneSplit(split) {
+    for (const cell of zoneCells) cell.visible = split;
+    zoneWhole.visible = !split;
+  }
+
   // marks = { 칸 번호: 'mine' | 'cpu' | 'hit' } (없는 칸은 기본색)
+  //   합친 존일 때는 표시가 하나라도 있으면 판 전체를 그 색으로 (맞힘 > CPU > 나 순서)
   function paintZones(marks = {}) {
     zoneCells.forEach((cell, i) => {
       const mark = marks[i];
       cell.color = mark ? ZONE_COLORS[mark] : ZONE_COLORS.base;
       cell.opacity = mark ? 0.5 : 0.15;
     });
+    const all = Object.values(marks);
+    const mark = ['hit', 'cpu', 'mine'].find((m) => all.includes(m));
+    zoneWhole.color = mark ? ZONE_COLORS[mark] : ZONE_COLORS.base;
+    zoneWhole.opacity = mark ? 0.5 : 0.15;
   }
 
   // ------------------------------------------------------------------
@@ -104,7 +129,7 @@
   }
 
   window.SCENE_MODELS = window.SCENE_MODELS ?? [];
-  window.SCENE_MODELS.push({ id: 'game_effects_root', children: [...zoneCells, batPivot, ...runnerNodes] });
+  window.SCENE_MODELS.push({ id: 'game_effects_root', children: [...zoneCells, zoneWhole, batPivot, ...runnerNodes] });
 
   // ------------------------------------------------------------------
   // 4) 함성 소리
@@ -309,7 +334,8 @@
     indices: new Uint16Array([0, 1, 2, 0, 2, 3]),
   };
   const boardScreen = (id, extra) => ({
-    id, primitive: QUAD, position: [...boardCenter], meshScale: boardSize,
+    // 외야 점수판(scoreboard.js) 글자보다 앞에 보이도록 0.3m 앞으로
+    id, primitive: QUAD, position: [boardCenter[0], boardCenter[1], boardCenter[2] + 0.3], meshScale: boardSize,
     emissive: true, fog: false, castShadow: false, visible: false, ...extra,
   });
   const boardText = boardScreen('board_homerun_text', { color: [10, 10, 20], texture: makeHomeRunTexture() });
@@ -444,5 +470,11 @@
     updateFlash();
   };
 
-  Object.assign(G, { paintZones, startSwing, showRunners, cheer, flashScoreboard, flashLights, hitFlight, resetBall, hideBall });
+  // 스윙 버튼을 누른 뒤 배트가 홈플레이트 위(공 위치)를 지나기까지 걸리는 시간(초)
+  const SWING_LEAD = SWING_DURATION * CONTACT_FRACTION;
+
+  // 전광판 화면 위치·크기와 사각형 판 (intro.js가 팀 고르기 화면을 전광판에 띄울 때 씀)
+  const boardArea = { center: boardCenter, size: boardSize };
+
+  Object.assign(G, { board: boardArea, QUAD, SWING_LEAD, setZoneSplit, paintZones, startSwing, showRunners, cheer, flashScoreboard, flashLights, hitFlight, resetBall, hideBall });
 })();

@@ -14,20 +14,44 @@
   // 홈플레이트를 바라보는 Y축 회전 (몸 앞 = 로컬 -z). rotationY(a)는 -z를 (-sin a, 0, -cos a)로 보냄
   const faceHome = (p) => Math.atan2(p[0], p[2]);
 
+  // 팀 엠블럼을 붙이는 판(데칼): 한 변 1인 사각형, 텍스처 좌표 (0,0) 왼아래 ~ (1,1) 오른위
+  //   선수의 앞은 로컬 -z라서, 판을 Y축으로 180° 돌려 앞면(+z)이 -z를 보게 함 (돌려도 좌우는 뒤집히지 않음)
+  const DECAL_QUAD = {
+    positions: new Float32Array([-0.5, -0.5, 0, 0.5, -0.5, 0, 0.5, 0.5, 0, -0.5, 0.5, 0]),
+    normals: new Float32Array([0, 0, 1, 0, 0, 1, 0, 0, 1, 0, 0, 1]),
+    texCoords: new Float32Array([0, 0, 1, 0, 1, 1, 0, 1]),
+    indices: new Uint16Array([0, 1, 2, 0, 2, 3]),
+  };
+  const decal = (id, position, height) => ({
+    id, primitive: DECAL_QUAD, position, rotation: [0, Math.PI, 0], meshScale: [height, height, 1], decalHeight: height,
+    color: [255, 255, 255], blend: 'alpha', castShadow: false, visible: false,
+  });
+
   // 사람 모양 노드: 발이 position(지면)에 닿도록 몸통·머리를 올림
-  function makePerson(id, position, { color, height = 1.8, width = 0.55, depth = 0.38, crouch = false } = {}) {
+  //   logo = true면 가슴과 모자 앞에 팀 엠블럼 판을 붙임 (setTeam에서 텍스처를 넣음)
+  function makePerson(id, position, { color, height = 1.8, width = 0.55, depth = 0.38, crouch = false, logo = false } = {}) {
     const bodyH = crouch ? 0.85 : height - 0.36;
     const bodyY = crouch ? 0.55 : bodyH / 2;
     const headY = crouch ? 1.1 : bodyH + 0.18;
     const body = { id: `${id}_body`, primitive: 'box', meshOffset: [0, bodyY, 0], meshScale: [width, bodyH, depth], color };
     const head = { id: `${id}_head`, primitive: 'sphere', position: [0, headY, 0], meshScale: 0.17, color: [235, 195, 160] };
     const cap = { id: `${id}_cap`, primitive: 'sphere', position: [0, headY + 0.07, 0], meshScale: [0.18, 0.1, 0.18], color };
+    const chestY = bodyY + bodyH * 0.18, chestH = Math.min(width * 0.55, bodyH * 0.35);
+    const decals = logo ? [
+      decal(`${id}_chest_logo`, [0, chestY, -(depth / 2 + 0.006)], chestH), // 가슴
+      decal(`${id}_cap_logo`, [0, headY + 0.09, -0.19], 0.1),             // 모자 앞
+    ] : [];
+    // 엠블럼 뒤 흰 바탕(패치): 엠블럼이 유니폼과 같은 색이라 그냥 붙이면 잘 안 보임
+    const patches = logo ? [
+      { ...decal(`${id}_chest_patch`, [0, chestY, -(depth / 2 + 0.003)], chestH * 1.25), color: [245, 245, 245], blend: undefined },
+      { ...decal(`${id}_cap_patch`, [0, headY + 0.09, -0.187], 0.12), color: [245, 245, 245], blend: undefined },
+    ] : [];
     return {
       id,
       position: [...position],
       rotation: [0, faceHome(position), 0],
-      children: [body, head, cap],
-      body, cap,
+      children: [body, head, cap, ...patches, ...decals],
+      body, cap, decals, patches,
     };
   }
 
@@ -45,11 +69,11 @@
   ];
   const fielders = FIELD_SPOTS.map((spot) => ({
     ...spot,
-    node: makePerson(`fielder_${spot.key}`, spot.pos, { color: [40, 100, 220] }),
+    node: makePerson(`fielder_${spot.key}`, spot.pos, { color: [40, 100, 220], logo: true }),
   }));
 
   // 포수: 홈플레이트 뒤에 쪼그려 앉음, 투수 쪽(-z)을 봄
-  const catcher = makePerson('catcher', [0, 0, 1.15], { color: [40, 100, 220], crouch: true, width: 0.6, depth: 0.5 });
+  const catcher = makePerson('catcher', [0, 0, 1.15], { color: [40, 100, 220], crouch: true, width: 0.6, depth: 0.5, logo: true });
   catcher.rotation[1] = 0;
   const MITT_REST = [0, 0.85, 0.55];
   const mitt = { id: 'catcher_mitt', primitive: 'sphere', position: [...MITT_REST], meshScale: [0.13, 0.13, 0.07], color: [120, 70, 35] };
@@ -76,13 +100,21 @@
   let armRaise = null;   // { start }
   let chase = null;      // { fielder, from, to, start, duration, reach }
 
-  // 수비 팀 색 (포수·야수 모두)
-  function setTeamColor(color) {
+  // 수비 팀 유니폼 (포수·야수 모두)
+  //   team = { color: 몸통 색, cap: 모자 색, mark: 엠블럼 이미지, markAspect: 엠블럼 가로 ÷ 세로 }
+  function setTeam(team) {
     for (const f of [...fielders.map((x) => x.node), catcher]) {
-      f.body.color = color;
-      f.cap.color = color;
+      f.body.color = team.color;
+      f.cap.color = team.cap ?? team.color;
+      for (const p of f.patches) p.visible = Boolean(team.mark);
+      for (const d of f.decals) {
+        d.texture = team.mark;
+        d.visible = Boolean(team.mark);
+        d.meshScale = [d.decalHeight * (team.markAspect ?? 1), d.decalHeight, 1]; // 엠블럼 비율대로 (찌그러짐 방지)
+      }
     }
   }
+  const setTeamColor = (color) => setTeam({ color }); // 예전 이름 (색만 바꿈)
 
   // 포수 미트를 공이 오는 곳으로 (pitchDuration 동안 미리 움직임)
   function catchAt(target, duration = 0.45) {
@@ -154,5 +186,5 @@
     update();
   };
 
-  window.FIELDERS = { fielders, catcher, umpire, setTeamColor, catchAt, resetMitt, callStrike, chaseBall, resetFielders };
+  window.FIELDERS = { fielders, catcher, umpire, setTeam, setTeamColor, catchAt, resetMitt, callStrike, chaseBall, resetFielders };
 })();
