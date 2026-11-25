@@ -334,7 +334,7 @@
       m.box([0, 0.3, -2.02], [12, 1.6, 0.04], COLORS.dugoutDark, { transform });
     }
 
-    // 조명탑: 사진처럼 외야 좌중간·우중간 외벽 바로 바깥에 2개 (나머지 조명은 지붕에 달림)
+    // 조명탑: 외야 좌중간·우중간 외벽 바로 바깥에 2개 (나머지 조명은 지붕에 달림)
     const towerPoles = [];
     for (const s of [1, -1]) {
       const side = s > 0 ? 'first' : 'third';

@@ -5,7 +5,7 @@
 //   기본 시점(3~7 또는 9) 하나 + 공 따라가기(8) + 멈춤(10)
 //   예) 3 → 8: 투수 뒤 자리에서 시선만 공을 따라감 (3·8 파란색). 8을 끄면 투수 뒤 시점으로 돌아옴
 //   6·7 + 8: 공이 멀면 확대(시야각 축소), 가까워지면 점점 원래 시야각으로
-// batter·overview 시점은 game.js가 씀. 내보내기: setCameraPreset(key), getCameraMode(), resetCamera()
+// batter·overview 시점은 game.js가 씀. 내보내기: setCameraPreset(key), resetCamera()
 (function () {
   const { DEG, MOUND_DIST, FOUL, dir, fenceRadius, onFrame } = window.STADIUM_PARTS;
 
@@ -265,9 +265,7 @@
     );
   }
 
-  window.CAMERA_PRESETS = CAMERA_PRESETS;
   window.setCameraPreset = setCameraPreset;
   window.resetCamera = () => applyPreset(DEFAULT_PRESET, true);
-  window.getCameraMode = () => (state.frozen ? 'frozen' : state.following ? 'follow' : state.base);
   applyPreset('overview', true); // 처음 화면은 경기장 전체
 })();

@@ -11,7 +11,7 @@
   //   관중을 CROWD_GROUPS개 무리로 나눠 무리마다 메시를 하나로 합칩니다. (무리 = 같은 움직임)
   //   옆 사람은 무작위로 다른 무리에 들어가기 때문에 바로 옆끼리도 움직임이 달라 보입니다.
   // ------------------------------------------------------------------
-  const CROWD_GROUPS = 24;
+  const CROWD_GROUPS = 12;
   const SEAT_SPACING = 1.0;   // 한 줄 안에서 사람 간격 (m)
   const EMPTY_SEAT_RATE = 0.18;
   const SHIRT_COLORS = [
@@ -91,12 +91,15 @@
   // 무리마다 고유한 움직임: 주기·크기·시작 위치가 모두 다르고, 사인 두 개를 섞어 규칙적이지 않게
   const crowdGroups = [];
   function buildCrowd() {
-    const builders = Array.from({ length: CROWD_GROUPS }, () => new MeshBuilder());
+    const builders = Array.from({ length: CROWD_GROUPS }, () => {
+      const m = new MeshBuilder();
+      m.castShadow = false; // 관중은 그림자를 만들지 않음 (매 프레임 움직여 그림자 캐시를 깨지 않도록)
+      return m;
+    });
     seatCrowd(builders, bowlPath(), BOWL_STAND, true); // 경기장을 한 바퀴 도는 관중석
 
     const children = builders.map((m, i) => {
       const node = m.toNode(`stadium_crowd_${i}`, { position: [0, 0, 0] });
-      for (const part of node.children) part.castShadow = false; // 그림자 패스 부담을 줄임
       crowdGroups.push({
         node,
         amplitude: 0.04 + random() * 0.08,          // 4 ~ 12cm
