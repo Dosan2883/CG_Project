@@ -177,6 +177,7 @@
     const batting = G.battingTeamKey?.();
     G.showRunners?.(state.over || state.choosing ? [] : state.bases, batting ? G.TEAMS[batting] : null);
     G.updateScoreboard?.(state); // 외야 전광판 (scoreboard.js)
+    G.updateBench?.(state);      // 덕아웃 벤치 선수 (uniforms.js)
   }
 
   // 오버레이를 캔버스 위에 정확히 겹침 (창 크기·스크롤이 바뀌어도 따라감)

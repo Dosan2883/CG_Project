@@ -4,7 +4,7 @@
 // 투수(pitcher_batter.js)를 뺀 수비 8명(포수, 1·2·3루수, 유격수, 좌·중·우익수)과 주심을 만듭니다.
 //   - 몸통(네모) + 머리(구)로 된 간단한 사람 모양
 //   - 포수: 쪼그려 앉은 자세, 미트가 공이 오는 칸으로 움직임
-//   - 심판: 포수 뒤에 서 있고, 스트라이크 때 오른팔을 들어 올림
+//   - 심판: 주심은 포수 뒤에 서 있고 스트라이크 때 오른팔을 들어 올림, 1·2·3루에 루심 (4심제)
 //   - 타구가 나가면 가장 가까운 수비수가 공 떨어지는 곳으로 달려감
 // game_controller.js가 window.FIELDERS를 통해 호출합니다.
 (function () {
@@ -90,8 +90,19 @@
   };
   umpire.children.push(umpireArm);
 
+  // 루심: 1루·3루는 파울 라인 바깥 루 뒤쪽, 2루는 2루 베이스 뒤 외야 쪽 (4심제). 검은 옷, 홈 쪽을 봄
+  const baseUmpires = [
+    { key: 'first', pos: dirAt(49, 31) },
+    { key: 'second', pos: dirAt(6, 44) },
+    { key: 'third', pos: dirAt(-49, 31) },
+  ].map(({ key, pos }) => {
+    const ump = makePerson(`umpire_${key}`, pos, { color: [25, 25, 30], height: 1.82 });
+    ump.cap.color = [15, 15, 18];
+    return ump;
+  });
+
   window.SCENE_MODELS = window.SCENE_MODELS ?? [];
-  window.SCENE_MODELS.push({ id: 'fielders_root', children: [...fielders.map((f) => f.node), catcher, mitt, umpire] });
+  window.SCENE_MODELS.push({ id: 'fielders_root', children: [...fielders.map((f) => f.node), catcher, mitt, umpire, ...baseUmpires] });
 
   // ------------------------------------------------------------------
   // 2) 동작
@@ -103,15 +114,17 @@
   // 수비 팀 유니폼 (포수·야수 모두)
   //   team = { color: 몸통 색, cap: 모자 색, mark: 엠블럼 이미지, markAspect: 엠블럼 가로 ÷ 세로 }
   function setTeam(team) {
-    for (const f of [...fielders.map((x) => x.node), catcher]) {
-      f.body.color = team.color;
-      f.cap.color = team.cap ?? team.color;
-      for (const p of f.patches) p.visible = Boolean(team.mark);
-      for (const d of f.decals) {
-        d.texture = team.mark;
-        d.visible = Boolean(team.mark);
-        d.meshScale = [d.decalHeight * (team.markAspect ?? 1), d.decalHeight, 1]; // 엠블럼 비율대로 (찌그러짐 방지)
-      }
+    for (const f of [...fielders.map((x) => x.node), catcher]) wearTeam(f, team);
+  }
+  // 사람 한 명에게 팀 유니폼 입히기 (makePerson으로 만든 노드). bodyColor를 주면 몸통만 그 색 (감독 점퍼 등)
+  function wearTeam(person, team, bodyColor) {
+    person.body.color = bodyColor ?? team.color;
+    person.cap.color = team.cap ?? team.color;
+    for (const p of person.patches) p.visible = Boolean(team.mark);
+    for (const d of person.decals) {
+      d.texture = team.mark;
+      d.visible = Boolean(team.mark);
+      d.meshScale = [d.decalHeight * (team.markAspect ?? 1), d.decalHeight, 1]; // 엠블럼 비율대로 (찌그러짐 방지)
     }
   }
   const setTeamColor = (color) => setTeam({ color }); // 예전 이름 (색만 바꿈)
@@ -186,5 +199,5 @@
     update();
   };
 
-  window.FIELDERS = { fielders, catcher, umpire, setTeam, setTeamColor, catchAt, resetMitt, callStrike, chaseBall, resetFielders };
+  window.FIELDERS = { fielders, catcher, umpire, baseUmpires, makePerson, wearTeam, setTeam, setTeamColor, catchAt, resetMitt, callStrike, chaseBall, resetFielders };
 })();
