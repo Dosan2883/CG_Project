@@ -20,7 +20,10 @@ Term_Project/
 │   └── app.js                      # 씬 그래프(SCENE_MODELS) 자동 순회 렌더링 및 애니메이션 루프, findNodeById 제공
 └── models/                         # [팀원 작업 폴더]
     ├── stadium_camera.js           # [역할 1: 유기태] 경기장 모델 + 카메라 프리셋(버튼 3~10) + 낮/밤 조명(버튼 11)
-    ├── pitcher_batter.js           # [역할 2: 백경환] 투수·타자 계층 모델 + 투구(버튼 2)/타격(버튼 1) 모션
+    ├── pitcher_batter/             # [역할 2: 백경환] 투수·타자 계층 모델, 팀 유니폼, 투구·타격 모션
+    │   ├── models.js
+    │   ├── uniforms.js
+    │   └── motion.js
     └── game_controller.js          # [역할 3: 오승재] 공 궤적 + 버튼 1~11 이벤트 연결 및 게임 로직
 ```
 
@@ -34,8 +37,11 @@ Term_Project/
 1. `common/matrix.js`
 2. `common/provided_sphere_data.js`
 3. `common/primitives.js`
-4. `models/stadium_camera.js`, `models/pitcher_batter.js`, `models/game_controller.js`
-5. `common/app.js`
+4. `models/stadium_camera/`의 스크립트 → `models/pitcher_batter/models.js` → `uniforms.js` → `motion.js`
+5. `models/fielders.js` → `models/game/`의 스크립트
+6. `common/app.js`
+
+브라우저의 Canvas에서 팀 색 텍스처를 합성할 수 있도록 프로젝트 폴더를 로컬 HTTP 서버로 열어 실행합니다.
 
 ---
 

@@ -144,10 +144,13 @@
     const takeCall = swingZone == null ? weighted(RULES.takeOdds) : null;
     const target = takeCall === 'ball' ? ballTarget(pitchZone) : ZONES[pitchZone].target;
 
+    pb.preparePitch(RULES.batting.windupMs / 1000);
+    await wait(RULES.batting.windupMs);
     const travel = pb.pitchDuration;
-    pb.triggerPitch(target);
+    const start = G.nowSec();
+    pb.triggerPitch(target, travel, start);
     fielders?.catchAt(target, travel * 0.8);
-    if (swingZone != null) startSwing(swingZone, travel); // 공이 도착하는 순간 배트가 홈플레이트 위를 지남
+    if (swingZone != null) startSwing(swingZone, travel, start); // 공 도착과 CPU 스윙의 임팩트를 맞춤
     await wait(travel * 1000 + 80);
 
     // 도착 후 상대(CPU)의 선택을 보여줌: 내 칸 노랑, CPU 칸 빨강, 맞힌 칸 초록
@@ -214,6 +217,7 @@
     paintZones();
     log('상대 투수가 던질 준비를 해요…');
     render();
+    pb.preparePitch(B.windupMs / 1000);
     await wait(B.windupMs);
     if (state.over) return;
 
@@ -227,7 +231,7 @@
     state.batPhase = 'pitch';
     log('공이 온다! 타이밍에 맞춰 스윙 (F)');
     render();
-    pb.triggerPitch(target, travel);
+    pb.triggerPitch(target, travel, start);
     fielders?.catchAt(target, travel * 0.8);
 
     // 공이 도착하고, 늦게 누를 수 있는 시간까지 기다림
@@ -244,7 +248,7 @@
     const w = state.swingWindow;
     if (state.batPhase !== 'pitch' || !w || w.press != null) return;
     w.press = G.nowSec();
-    startSwing(w.zone, SWING_LEAD); // 누른 뒤 SWING_LEAD초에 배트가 공 위치를 지남
+    startSwing(w.zone, SWING_LEAD, w.press); // 누른 뒤 SWING_LEAD초에 배트가 공 위치를 지남
     render();
   }
 

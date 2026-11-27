@@ -1,7 +1,7 @@
 'use strict';
 
 // [역할 3: 게임] 2/4 — 3D 연출과 소리
-//   스트라이크존 표시, 배트 스윙, 루 위 주자, 함성 소리, 홈런 전광판 쇼, 밤 홈런 조명 쇼, 타구 궤적
+//   스트라이크존 표시, 루 위 주자, 함성 소리, 홈런 전광판 쇼, 밤 홈런 조명 쇼, 타구 궤적
 //   경기 규칙은 모르고, game.js가 부르는 대로 보여 주기만 합니다.
 (function () {
   const G = window.GAME_CONTROLLER;
@@ -59,49 +59,6 @@
     const mark = ['hit', 'cpu', 'mine'].find((m) => all.includes(m));
     zoneWhole.color = mark ? ZONE_COLORS[mark] : ZONE_COLORS.base;
     zoneWhole.opacity = mark ? 0.5 : 0.15;
-  }
-
-  // ------------------------------------------------------------------
-  // 2) 배트 (타자 앞 피벗을 Y축으로 돌려 스윙)
-  // ------------------------------------------------------------------
-  const BAT_REST = { yaw: -Math.PI / 2, tilt: -Math.PI / 2 + 1.1, y: 1.05 };
-  const SWING_END_YAW = Math.PI * 0.75;
-  const batNode = {
-    id: 'bat',
-    primitive: 'cylinder',
-    rotation: [0, 0, BAT_REST.tilt],
-    meshOffset: [0, 0.42, 0],
-    meshScale: [0.065, 0.84, 0.065],
-    color: [175, 125, 70],
-  };
-  const batPivot = { id: 'bat_pivot', position: [-0.62, BAT_REST.y, 0], rotation: [0, BAT_REST.yaw, 0], children: [batNode] };
-  let swing = null; // { start, duration, y }
-
-  // 배트가 홈플레이트 위(+x 방향, yaw = 0)를 지나는 시점 = 스윙 시작 후 이 비율
-  const CONTACT_FRACTION = (0 - BAT_REST.yaw) / (SWING_END_YAW - BAT_REST.yaw);
-  const SWING_DURATION = 0.3;
-
-  // contactInSec초 뒤에 배트가 홈플레이트 위를 지나도록 스윙 시작
-  function startSwing(zone, contactInSec) {
-    swing = { start: nowSec() + contactInSec - SWING_DURATION * CONTACT_FRACTION, duration: SWING_DURATION, y: ZONES[zone].target[1] };
-  }
-  function updateSwing() {
-    if (!swing) return;
-    const t = (clock - swing.start) / swing.duration;
-    if (t < 0) return;
-    if (t > 2.6) { // 휘두른 뒤 잠깐 멈췄다가 원래 자세로
-      swing = null;
-      batPivot.rotation[1] = BAT_REST.yaw;
-      batPivot.position[1] = BAT_REST.y;
-      batNode.rotation[2] = BAT_REST.tilt;
-      return;
-    }
-    const s = Math.min(t, 1);
-    const ease = s * s * (3 - 2 * s);
-    batPivot.rotation[1] = BAT_REST.yaw + (SWING_END_YAW - BAT_REST.yaw) * ease;
-    const level = Math.min(s / 0.4, 1); // 앞쪽 40% 동안 배트를 눕히고 높이를 맞춤
-    batNode.rotation[2] = BAT_REST.tilt + (-Math.PI / 2 - BAT_REST.tilt) * level;
-    batPivot.position[1] = BAT_REST.y + (swing.y - BAT_REST.y) * level;
   }
 
   // ------------------------------------------------------------------
@@ -164,7 +121,7 @@
   }
 
   window.SCENE_MODELS = window.SCENE_MODELS ?? [];
-  window.SCENE_MODELS.push({ id: 'game_effects_root', children: [...zoneCells, zoneWhole, batPivot, ...runnerNodes] });
+  window.SCENE_MODELS.push({ id: 'game_effects_root', children: [...zoneCells, zoneWhole, ...runnerNodes] });
 
   // ------------------------------------------------------------------
   // 4) 함성 소리
@@ -467,6 +424,7 @@
     };
     const p = plans[kind];
     if (kind === 'homerun') p.dist = fenceAt(p.angle) + 25; // 펜스 너머 관중석
+    pb.finishPitch();
     const from = [...pb.ball.position];
     const to = [Math.sin(p.angle) * p.dist, p.endY, -Math.cos(p.angle) * p.dist];
     flight = { start: nowSec(), duration: p.duration, from, to, apex: p.apex };
@@ -483,14 +441,18 @@
     if (t >= 1) flight = null;
   }
   // 플레이가 끝나면 공을 숨김 (필드·홈플레이트·관중석에 공이 남지 않게)
-  //   다음 투구 때 pitcher_batter.js의 triggerPitch()가 다시 보이게 함
+  //   다음 투구 때 투수 모션에서 공을 다시 표시합니다.
   function hideBall() {
     flight = null;
+    pb.finishPitch();
     pb.ball.visible = false;
     pb.ball.position = [...pb.ballStart];
   }
   // 새 경기: 날아가던 공을 멈추고 숨김
-  const resetBall = hideBall;
+  function resetBall() {
+    hideBall();
+    pb.resetPose();
+  }
 
   // ------------------------------------------------------------------
   // 7) 매 프레임 갱신
@@ -499,17 +461,18 @@
   window.updateBaseballScene = function (timeSec, dt) {
     if (typeof prevUpdate === 'function') prevUpdate(timeSec, dt);
     clock = timeSec;
-    updateSwing();
     updateFlight(dt);
     updateBoardFlash();
     updateFlash();
   };
 
-  // 스윙 버튼을 누른 뒤 배트가 홈플레이트 위(공 위치)를 지나기까지 걸리는 시간(초)
-  const SWING_LEAD = SWING_DURATION * CONTACT_FRACTION;
-
   // 전광판 화면 위치·크기와 사각형 판 (intro.js가 팀 고르기 화면을 전광판에 띄울 때 씀)
   const boardArea = { center: boardCenter, size: boardSize };
 
-  Object.assign(G, { board: boardArea, QUAD, SWING_LEAD, setZoneSplit, paintZones, startSwing, showRunners, cheer, flashScoreboard, flashLights, hitFlight, resetBall, hideBall });
+  Object.assign(G, {
+    board: boardArea, QUAD, setZoneSplit, paintZones, showRunners, cheer,
+    flashScoreboard, flashLights, hitFlight, resetBall, hideBall,
+    SWING_LEAD: pb.swingLead,
+    startSwing: (zone, contactInSec, start) => pb.startSwing(ZONES[zone].target, contactInSec, start),
+  });
 })();
