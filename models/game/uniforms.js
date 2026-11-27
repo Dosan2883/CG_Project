@@ -18,7 +18,8 @@
   // ------------------------------------------------------------------
   // 덕아웃 위 팀 엠블럼: 네트 위 시점 기준 왼쪽(3루 쪽) = 덕진 C, 오른쪽(1루 쪽) = 완산 A
   //   덕아웃 위치·방향은 stadium_model.js와 같은 식으로 계산
-  //     중심 = dir(s·FOUL) × 24 + dir(s·135°) × 14.5, Y축 회전 s·FOUL (s = +1 1루 쪽, −1 3루 쪽)
+  //     중심 = dir(s·FOUL) × 24 + dir(s·135°) × DUGOUT_OUT, Y축 회전 s·FOUL (s = +1 1루 쪽, −1 3루 쪽)
+  //     DUGOUT_OUT = 파울 라인에서 덕아웃 중심까지 거리 (stadium_model.js가 STADIUM_INFO.dugoutOffset으로 알려 줌)
   //     덕아웃 상자는 바닥 기준 높이 2.2 + 지붕 0.2, 앞면(그라운드 쪽) = 로컬 −z
   //   엠블럼 판은 지붕 위에 눕혀서 붙임 (판 앞면이 하늘을 봄)
   //     X축 −90°: 판의 앞면 +z → 위(+y), 이미지 위쪽 +y → −z
@@ -28,11 +29,12 @@
   const parts = window.STADIUM_PARTS;
   if (parts?.dir && parts.FOUL != null) {
     const DUGOUT_SIDES = [{ s: -1, team: 'deokjin' }, { s: 1, team: 'wansan' }];
+    const DUGOUT_OUT = window.STADIUM_INFO?.dugoutOffset ?? 14.5;
     const SIGN_HEIGHT = 3.6;   // 엠블럼 세로 길이 (m) — 지붕 폭 4.4m 안에 들어가는 크기
     const ROOF_TOP = 2.4;      // 덕아웃 지붕 윗면 높이
     const signs = DUGOUT_SIDES.map(({ s, team }) => {
       const d = parts.dir(s * parts.FOUL), n = parts.dir(s * 135 * Math.PI / 180);
-      const center = [d[0] * 24 + n[0] * 14.5, 0, d[2] * 24 + n[2] * 14.5];
+      const center = [d[0] * 24 + n[0] * DUGOUT_OUT, 0, d[2] * 24 + n[2] * DUGOUT_OUT];
       // 지붕 한가운데, 지붕 윗면보다 2cm 위 (지붕과 겹쳐 깜빡이지 않게)
       const position = [center[0], ROOF_TOP + 0.02, center[2]];
       const info = G.TEAMS[team];
@@ -63,7 +65,7 @@
       const managers = [];
       for (const { s, team } of DUGOUT_SIDES) {
         const d = parts.dir(s * parts.FOUL), n = parts.dir(s * 135 * Math.PI / 180);
-        const center = [d[0] * 24 + n[0] * 14.5, 0, d[2] * 24 + n[2] * 14.5];
+        const center = [d[0] * 24 + n[0] * DUGOUT_OUT, 0, d[2] * 24 + n[2] * DUGOUT_OUT];
         const yaw = s * parts.FOUL;
         const toWorld = (x, z) => [center[0] + Math.cos(yaw) * x + Math.sin(yaw) * z, 0, center[2] - Math.sin(yaw) * x + Math.cos(yaw) * z];
         const info = G.TEAMS[team];

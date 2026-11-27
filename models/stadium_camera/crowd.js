@@ -4,19 +4,19 @@
 // 관중석 계단마다 저폴리곤 관중을 앉히고, 무리마다 다른 리듬으로 위아래로 들썩이게 합니다.
 // 파일끼리 공유하는 값은 window.STADIUM_PARTS 한 곳에 모읍니다. (다른 팀원 코드와 이름 충돌 방지)
 (function () {
-  const { MeshBuilder, outwardDirections, bowlPath, BOWL_STAND, stadiumRoot, onFrame } = window.STADIUM_PARTS;
+  const { MeshBuilder, outwardDirections, STANDS, stadiumRoot, onFrame } = window.STADIUM_PARTS;
   // ------------------------------------------------------------------
   // 관중: 관중석 계단 한 칸마다 앉아 있고, 각자 다른 리듬으로 위아래로 들썩임
   //   사람 수천 명을 노드 하나씩 만들면 draw 호출이 너무 많아지므로,
   //   관중을 CROWD_GROUPS개 무리로 나눠 무리마다 메시를 하나로 합칩니다. (무리 = 같은 움직임)
   //   옆 사람은 무작위로 다른 무리에 들어가기 때문에 바로 옆끼리도 움직임이 달라 보입니다.
   // ------------------------------------------------------------------
-  const CROWD_GROUPS = 12;
+  // 그리는 횟수 = 무리 수 × (옷 색 수 + 피부색 수) → 8 × (4 + 3) = 56번
+  const CROWD_GROUPS = 8;
   const SEAT_SPACING = 1.0;   // 한 줄 안에서 사람 간격 (m)
   const EMPTY_SEAT_RATE = 0.18;
-  const SHIRT_COLORS = [
-    [0.85, 0.15, 0.15], [0.15, 0.30, 0.75], [0.95, 0.95, 0.95], [0.95, 0.78, 0.15],
-    [0.20, 0.55, 0.25], [0.12, 0.12, 0.14], [0.90, 0.45, 0.15], [0.55, 0.25, 0.60],
+  const SHIRT_COLORS = [       // 빨강, 파랑, 흰색, 검정
+    [0.85, 0.15, 0.15], [0.15, 0.30, 0.75], [0.95, 0.95, 0.95], [0.12, 0.12, 0.14],
   ];
   const SKIN_COLORS = [[0.96, 0.80, 0.66], [0.85, 0.65, 0.48], [0.62, 0.44, 0.32]];
 
@@ -34,20 +34,17 @@
   const random = seededRandom(20261119);
   const pick = (list) => list[Math.floor(random() * list.length)];
 
-  // 경로를 따라 일정 간격으로 점과 바깥 방향을 뽑음 (경로 점 사이는 선형 보간)
-  //   closed = true면 마지막 점 → 첫 점 구간까지 이어서 뽑음
-  function samplePath(path, spacing, closed = false) {
-    const outward = outwardDirections(path, closed);
-    const count = path.length;
+  // 열린 경로를 따라 일정 간격으로 점과 바깥 방향을 뽑음 (경로 점 사이는 선형 보간)
+  function samplePath(path, spacing) {
+    const outward = outwardDirections(path);
     const samples = [];
     let carry = spacing / 2;
-    for (let i = 0; i < (closed ? count : count - 1); i++) {
-      const j = (i + 1) % count;
-      const a = path[i], b = path[j];
+    for (let i = 0; i < path.length - 1; i++) {
+      const a = path[i], b = path[i + 1];
       const len = Math.hypot(b[0] - a[0], b[2] - a[2]);
       for (let d = carry; d < len; d += spacing) {
         const t = d / len;
-        const n = normalize(lerpVec3(outward[i], outward[j], t));
+        const n = normalize(lerpVec3(outward[i], outward[i + 1], t));
         samples.push({ p: lerpVec3(a, b, t), n });
       }
       carry = (carry - len) % spacing;
@@ -67,21 +64,19 @@
     m.box([x, y + BODY_H + 0.02, z], HEAD_SIZE, skin, OPEN_BOX);
   }
 
-  // 관중석 한 구역(경로 + 계단 치수)에 관중을 앉힘. 사람마다 무작위 무리 번호를 받음
-  function seatCrowd(builders, path, stand, closed = false) {
-    const seats = samplePath(path, SEAT_SPACING, closed);
+  // 관중석 한 층(경로 + 계단 치수)에 관중을 앉힘. 사람마다 무작위 무리 번호를 받음
+  //   줄마다 그 줄 위치로 옮긴 경로에서 간격을 다시 재므로, 뒷줄도 곡선 구간에서 사람 간격이 일정함
+  function seatCrowd(builders, stand) {
+    const outward = outwardDirections(stand.path);
     for (let row = 0; row < stand.rows; row++) {
-      const offset = (row + 0.5) * stand.depth;           // 좌석 단 가운데
-      const seatY = stand.frontWall + row * stand.rise;   // 좌석 단 높이
-      for (const { p, n } of seats) {
-        if (random() < EMPTY_SEAT_RATE) continue;
+      const offset = stand.start + (row + 0.5) * stand.depth; // 좌석 단 가운데
+      const seatY = stand.firstY + row * stand.rise;           // 좌석 단 높이
+      const rowPath = stand.path.map((p, i) => [p[0] + outward[i][0] * offset, 0, p[2] + outward[i][2] * offset]);
+      for (const { p, n } of samplePath(rowPath, SEAT_SPACING)) {
+        if (random() < (stand.emptyRate ?? EMPTY_SEAT_RATE)) continue;
         const jitter = (random() - 0.5) * 0.25;            // 줄 안에서 살짝 들쭉날쭉
         const t = [-n[2], 0, n[0]];                        // 경로 방향
-        const base = [
-          p[0] + n[0] * offset + t[0] * jitter,
-          seatY,
-          p[2] + n[2] * offset + t[2] * jitter,
-        ];
+        const base = [p[0] + t[0] * jitter, seatY, p[2] + t[2] * jitter];
         const group = Math.floor(random() * CROWD_GROUPS);
         addPerson(builders[group], base, pick(SHIRT_COLORS), pick(SKIN_COLORS));
       }
@@ -96,7 +91,7 @@
       m.castShadow = false; // 관중은 그림자를 만들지 않음 (매 프레임 움직여 그림자 캐시를 깨지 않도록)
       return m;
     });
-    seatCrowd(builders, bowlPath(), BOWL_STAND, true); // 경기장을 한 바퀴 도는 관중석
+    for (const stand of STANDS) seatCrowd(builders, stand); // 메인 스탠드 아래층·위층 + 외야 계단석
 
     const children = builders.map((m, i) => {
       const node = m.toNode(`stadium_crowd_${i}`, { position: [0, 0, 0] });

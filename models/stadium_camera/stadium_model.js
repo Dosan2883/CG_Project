@@ -41,7 +41,7 @@
     // 5) 홈 주변 흙 원  y = 0.12
     m.disc(0, 0, 4.0, 0.12, COLORS.dirt, 48);
 
-    // 6) 파울 라인 + 타석 박스 + 대기 타석 원  y = 0.15
+    // 6) 파울 라인 + 타석 박스  y = 0.15
     const yl = 0.15;
     for (const s of [1, -1]) {
       const end = dir(s * FOUL).map((x) => x * fenceRadius(FOUL));
@@ -51,8 +51,6 @@
       m.strip([x0, 0, z1], [x1, 0, z1], 0.08, yl, COLORS.white);
       m.strip([x0, 0, z0], [x0, 0, z1], 0.08, yl, COLORS.white);
       m.strip([x1, 0, z0], [x1, 0, z1], 0.08, yl, COLORS.white);
-      m.disc(s * 11, 4, 1.5, 0.04, COLORS.dirt, 32);
-      m.ring(s * 11, 4, 1.4, 1.5, 0.06, COLORS.white, 32);
     }
   }
 
@@ -102,137 +100,282 @@
   }
 
   // 계단식 관중석 단면: [바깥 방향 오프셋, 높이, 색]
-  // 관중석 계단 치수: 줄 수, 앞벽 높이, 한 단 높이, 한 단 깊이 (관중 배치에서도 사용)
-  const BOWL_STAND = { rows: 18, frontWall: 1.4, rise: 0.45, depth: 0.85 };
+  // 관중석 한 층의 계단 치수: 시작 오프셋, 첫 좌석 높이, 줄 수, 한 단 높이, 한 단 깊이 (관중 배치에서도 사용)
+  //   메인 스탠드(좌측 폴 ~ 홈 뒤 ~ 우측 폴) = 아래층 → 콘코스 → 층 사이 띠 → 위층 (모두 빨간 좌석)
+  //   외야 스탠드(좌중간·우중간) = 낮은 회색 계단석. emptyRate = 빈자리 비율 (관중 배치에서 사용)
+  const LOWER_DECK = { start: 0, firstY: 1.4, rows: 14, rise: 0.45, depth: 0.85 };
+  const CONCOURSE = 2.0, BAND_HEIGHT = 2.4; // 층 사이 통로 폭, 위층 앞벽(밤에 빛나는 띠) 높이
+  const UPPER_DECK = {
+    start: LOWER_DECK.start + LOWER_DECK.rows * LOWER_DECK.depth + CONCOURSE,
+    firstY: LOWER_DECK.firstY + LOWER_DECK.rows * LOWER_DECK.rise + BAND_HEIGHT,
+    rows: 14, rise: 0.6, depth: 0.85,
+  };
+  const OUTFIELD_DECK = { start: 0, firstY: 1.2, rows: 10, rise: 0.45, depth: 0.9, emptyRate: 0.75 };
 
-  function standProfile(rows, frontWall, rise, depth, colorA, colorB) {
-    const prof = [[0, 0, COLORS.wall], [0, frontWall, COLORS.wall]];
-    let h = frontWall;
-    for (let i = 0; i < rows; i++) {
-      const off = i * depth;
-      prof.push([off + depth, h, i % 2 ? colorB : colorA]); // 좌석 단 (수평)
-      h += rise;
-      prof.push([off + depth, h, COLORS.concrete]);           // 단 높이 (수직)
+  // 한 층의 계단을 단면에 이어 붙임 (단면의 마지막 점이 (deck.start, deck.firstY)여야 함)
+  function addDeck(prof, deck, colorA, colorB) {
+    let h = deck.firstY;
+    for (let i = 0; i < deck.rows; i++) {
+      const off = deck.start + (i + 1) * deck.depth;
+      prof.push([off, h, i % 2 ? colorB : colorA]); // 좌석 단 (수평)
+      h += deck.rise;
+      prof.push([off, h, COLORS.concrete]);          // 단 높이 (수직)
     }
-    const back = rows * depth;
-    prof.push([back + 0.6, h, COLORS.concrete]);
-    prof.push([back + 0.6, h + 1.2, COLORS.wall]); // 뒤쪽 난간 벽
-    prof.push([back + 0.8, h + 1.2, COLORS.wall]);
-    prof.push([back + 0.8, 0, COLORS.wall]);
-    return prof;
+    return { end: deck.start + deck.rows * deck.depth, top: h };
+  }
+  // 맨 뒤 난간 벽 + 바닥까지 내려오는 뒷벽. 반환값 = 단면의 맨 뒤 오프셋
+  function addBackWall(prof, end, top) {
+    prof.push([end + 0.6, top, COLORS.concrete]);
+    prof.push([end + 0.6, top + 1.2, COLORS.wall]);
+    prof.push([end + 0.8, top + 1.2, COLORS.wall]);
+    prof.push([end + 0.8, 0, COLORS.wall]);
+    return end + 0.8;
   }
 
-  // 관중석 고리(볼) 경로: 경기장을 한 바퀴 감싸는 닫힌 곡선 (관중석 앞벽 위치)
-  //   사진(원형 구장)처럼 내야는 파울 라인을 따라 곧게 가다가, 코너에서 크게 휘어져 외야 관중석으로 이어집니다.
-  //     1) 1루 라인 직선 (파울 라인에서 18m 바깥, 홈에서 60m까지) → 2) 홈 뒤 반원 → 3) 3루 라인 직선
-  //     4) 3루 코너 곡선 → 5) 외야 호 (펜스 2.5m 뒤, ±30°) → 6) 1루 코너 곡선 → 다시 1)로
+  function mainStandProfile() {
+    const prof = [[0, 0, COLORS.wall], [0, LOWER_DECK.firstY, COLORS.facadeBanner]]; // 앞벽 = 빨간 광고판
+    const lower = addDeck(prof, LOWER_DECK, COLORS.outSeatA, COLORS.outSeatB);
+    prof.push([UPPER_DECK.start, lower.top, COLORS.concrete]);         // 콘코스 (수평 통로)
+    prof.push([UPPER_DECK.start, UPPER_DECK.firstY, COLORS.facadeWindow]); // 층 사이 띠 (밤에 빛남)
+    const upper = addDeck(prof, UPPER_DECK, COLORS.outSeatA, COLORS.outSeatB);
+    return { prof, back: addBackWall(prof, upper.end, upper.top), top: upper.top + 1.2 };
+  }
+  function outfieldStandProfile() {
+    const prof = [[0, 0, COLORS.wall], [0, OUTFIELD_DECK.firstY, COLORS.wall]];
+    const deck = addDeck(prof, OUTFIELD_DECK, COLORS.concrete, COLORS.roofUnder);
+    return { prof, back: addBackWall(prof, deck.end, deck.top) };
+  }
+  const MAIN_STAND = mainStandProfile();
+  const OUTFIELD_STAND = outfieldStandProfile();
+
+  // 관중석 경로 (관중석 앞벽 위치)
+  //   메인 스탠드 (높은 2층, 말발굽 모양): 1루 라인(폴 근처) → 홈 뒤 반원 → 3루 라인(폴 근처)
+  //   외야 스탠드 (낮은 계단석 2개): 좌중간·우중간 펜스 뒤. 가운데(중견수 뒤)는 전광판 자리
   //   관중석·외벽·지붕·지붕 조명·관중이 모두 이 경로를 기준으로 바깥 방향 오프셋을 씁니다.
-  const LINE_OFFSET = 18;          // 파울 라인에서 관중석 앞벽까지 거리
-  const LINE_LENGTH = 60;          // 내야 직선 구간 길이 (홈에서 파울 라인을 따라)
-  const OUTFIELD_HALF_ANGLE = 30;  // 외야 호 구간 (중견수 방향 기준 ±30°)
-  const CORNER_HANDLE = 0.6;       // 코너 곡선 제어점 길이 비율 (클수록 바깥으로 둥글게 부풂)
+  const LINE_OFFSET = 12;          // 파울 라인에서 관중석 앞벽까지 거리
+  const DUGOUT_OFFSET = LINE_OFFSET - 2; // 파울 라인에서 덕아웃 중심까지 (깊이 4m → 뒷면이 관중석 앞벽에 붙음)
+  const LINE_LENGTH = 90;          // 메인 스탠드 직선 구간 길이 (홈에서 파울 라인을 따라, 폴 근처까지)
+  const [OS_FROM, OS_TO] = [10, 32];     // 외야 스탠드 구간 (중견수 방향 기준 ±10° ~ ±32°)
 
   // 외야 호 위의 점: 펜스 2.5m 뒤
   function outfieldArcPoint(theta) {
     const r = fenceRadius(theta) + 2.5, d = dir(theta);
     return [d[0] * r, 0, d[2] * r];
   }
-  // 내야 직선 위의 점: 파울 라인을 따라 t m, 바깥으로 LINE_OFFSET m
-  function lineStandPoint(side, t) {
+  // 파울 라인에서 관중석 앞벽까지 거리: 내야에서는 LINE_OFFSET, 외야 쪽으로 가면서 점점 좁아져
+  //   폴 근처에서는 CORNER_OFFSET → 관중석이 그라운드 쪽으로 휘어 들어와 외야 펜스 끝과 만남
+  //   TAPER = [좁아지기 시작하는 t, 다 좁아진 t] (홈에서 파울 라인을 따라 m), 사이는 smoothstep으로 부드럽게
+  const CORNER_OFFSET = 2, TAPER = [40, 72];
+  function lineOffset(t) {
+    const k = Math.min(1, Math.max(0, (t - TAPER[0]) / (TAPER[1] - TAPER[0])));
+    return LINE_OFFSET + (CORNER_OFFSET - LINE_OFFSET) * k * k * (3 - 2 * k);
+  }
+  // 파울 라인을 따라 t m 간 점에서 바깥으로 off m
+  function linePoint(side, t, off) {
     const d = dir(side * FOUL), n = dir(side * 135 * DEG);
-    return [d[0] * t + n[0] * LINE_OFFSET, 0, d[2] * t + n[2] * LINE_OFFSET];
+    return [d[0] * t + n[0] * off, 0, d[2] * t + n[2] * off];
+  }
+  const lineStandPoint = (side, t) => linePoint(side, t, lineOffset(t)); // 관중석 앞벽 위의 점
+
+  // 외야 호 위의 점들: from° → to° (2.5° 간격)
+  function arcPoints(from, to) {
+    const points = [];
+    for (let a = from; a <= to + 1e-9; a += 2.5) points.push(outfieldArcPoint(a * DEG));
+    return points;
   }
 
-  // 코너 곡선 (3차 베지어): 내야 직선 끝 P0 → 외야 호 끝 P1
-  //   B(t) = (1−t)³P0 + 3(1−t)²t·C0 + 3(1−t)t²·C1 + t³P1
-  //   C0는 파울 라인 방향, C1은 외야 호가 뻗어 나가던 방향에 두어 양쪽 이음새가 꺾이지 않게 함
-  function cornerCurve(side, segments = 12) {
-    const p0 = lineStandPoint(side, LINE_LENGTH);
-    const thetaEnd = side * OUTFIELD_HALF_ANGLE * DEG;
-    const p1 = outfieldArcPoint(thetaEnd);
-    const ahead = outfieldArcPoint(thetaEnd + side * 0.01);
-    const t0 = dir(side * FOUL);
-    const t1 = normalize([ahead[0] - p1[0], 0, ahead[2] - p1[2]]);
-    const len = Math.hypot(p1[0] - p0[0], p1[2] - p0[2]) * CORNER_HANDLE;
-    const c0 = [p0[0] + t0[0] * len, 0, p0[2] + t0[2] * len];
-    const c1 = [p1[0] + t1[0] * len, 0, p1[2] + t1[2] * len];
-    const curve = [];
-    for (let i = 0; i <= segments; i++) {
-      const t = i / segments, u = 1 - t;
-      const b = [u * u * u, 3 * u * u * t, 3 * u * t * t, t * t * t];
-      curve.push([
-        b[0] * p0[0] + b[1] * c0[0] + b[2] * c1[0] + b[3] * p1[0],
-        0,
-        b[0] * p0[2] + b[1] * c0[2] + b[2] * c1[2] + b[3] * p1[2],
-      ]);
+  // 메인 스탠드 경로: 1루 라인 → 홈 뒤 반원 → 3루 라인 (열린 경로)
+  //   edge = 경로 점마다 짝이 되는 그라운드 쪽 점 (파울 라인 위의 점, 홈 뒤 반원은 홈) → 파울 지역 흙바닥용
+  function mainStandPath() {
+    const path = [], edge = [];
+    for (let t = LINE_LENGTH; t >= 0; t -= 5) {                                               // 1) 1루 라인
+      path.push(lineStandPoint(1, t));
+      edge.push(linePoint(1, t, 0));
     }
-    return curve; // P0 → P1
-  }
-
-  function bowlPath() {
-    const path = [];
-    for (let t = LINE_LENGTH; t >= 0; t -= 5) path.push(lineStandPoint(1, t));              // 1) 1루 라인
     for (let a = 140; a <= 220; a += 5) {                                                      // 2) 홈 뒤 반원
       const d = dir(a * DEG);
       path.push([d[0] * LINE_OFFSET, 0, d[2] * LINE_OFFSET]);
+      edge.push([0, 0, 0]);
     }
-    for (let t = 0; t <= LINE_LENGTH; t += 5) path.push(lineStandPoint(-1, t));               // 3) 3루 라인
-    path.push(...cornerCurve(-1).slice(1, -1));                                                // 4) 3루 코너
-    for (let a = -OUTFIELD_HALF_ANGLE; a <= OUTFIELD_HALF_ANGLE; a += 2.5) {                  // 5) 외야 호
-      path.push(outfieldArcPoint(a * DEG));
+    for (let t = 0; t <= LINE_LENGTH; t += 5) {                                               // 3) 3루 라인
+      path.push(lineStandPoint(-1, t));
+      edge.push(linePoint(-1, t, 0));
     }
-    path.push(...cornerCurve(1).slice(1, -1).reverse());                                       // 6) 1루 코너
-    return path; // 닫힌 고리 (마지막 점 다음 = 첫 점)
+    return { path, edge };
+  }
+  const { path: MAIN_PATH, edge: MAIN_EDGE } = mainStandPath();
+  const OUTFIELD_PATHS = [arcPoints(-OS_TO, -OS_FROM), arcPoints(OS_FROM, OS_TO)]; // 좌중간, 우중간
+
+  // 파울 지역 흙바닥: 파울 라인(MAIN_EDGE)부터 관중석 앞벽(MAIN_PATH)까지 이웃한 점끼리 사각형으로 깔아
+  //   그라운드와 관중석 사이를 흙으로 이음 (외야 잔디(0.03)보다 낮은 0.02 높이)
+  function buildFoulTerritory(m) {
+    const y = 0.02, at = (p) => [p[0], y, p[2]];
+    for (let i = 0; i < MAIN_PATH.length - 1; i++) {
+      const [e0, e1, p1, p0] = [MAIN_EDGE[i], MAIN_EDGE[i + 1], MAIN_PATH[i + 1], MAIN_PATH[i]].map(at);
+      const sameEdge = e0[0] === e1[0] && e0[2] === e1[2]; // 홈 뒤 반원: 두 짝이 모두 홈 → 삼각형
+      if (sameEdge) m.tri(e0, p1, p0, COLORS.track, [0, 1, 0]);
+      else m.quad(e0, e1, p1, p0, COLORS.track, [0, 1, 0]);
+    }
   }
 
-  // 관중석 (18줄 계단, 한 바퀴)
-  function buildBowlStands(m, path) {
-    const s = BOWL_STAND;
-    m.extrudeAlong(path, standProfile(s.rows, s.frontWall, s.rise, s.depth, COLORS.seatA, COLORS.seatB), true);
+  // 파울 지역 잔디 (흙바닥 위) y = 0.07 : 흙(0.02·0.06)보다 위, 홈 주변 흙(0.12)보다 아래
+  //   1) 1루·3루 쪽 (덕아웃 쪽): 홈에서 GRASS_FROM m부터 폴 근처까지, 파울 라인 바로 옆 ~ 관중석 앞벽
+  //      → 관중석이 휘어 들어오는 모양을 그대로 따라가며 외야 잔디와 이어짐 (덕아웃은 이 잔디 위에 놓임)
+  //      라인 옆에 흙이 보이지 않도록 라인에 딱 붙임. 흰 파울 라인(0.15)은 잔디 위에 그려짐
+  //   2) 홈 뒤: 홈에서 5.5 ~ 10m, 150° ~ 210° 부채꼴
+  const GRASS_FROM = 5;
+  function buildFoulGrass(m) {
+    const y = 0.07;
+    for (const s of [1, -1]) {
+      const at = (t, off) => { const p = linePoint(s, t, off); p[1] = y; return p; };
+      for (let t = GRASS_FROM; t < LINE_LENGTH; t += 5) {
+        const t1 = t + 5;
+        m.quad(at(t, 0), at(t1, 0), at(t1, lineOffset(t1)), at(t, lineOffset(t)), COLORS.infieldGrass, [0, 1, 0]);
+      }
+    }
+    m.fan(150 * DEG, 210 * DEG, 12, () => 10, () => 5.5, y, () => COLORS.infieldGrass);
   }
 
-  // 관중석 뒤 외벽 (사진의 여러 층 건물 외관): 바깥 면에 층마다 색 띠
-  const FACADE_OFFSET = 17.6, FACADE_HEIGHT = 13.2;
-  function buildFacade(m, path) {
-    const f = FACADE_OFFSET;
-    m.extrudeAlong(path, [
-      [f, 0, COLORS.concrete],
+  // 둥근 지붕·외벽: 위에서 보면 바깥 가장자리가 원(중심 ROOF_CENTER, 반지름 ROOF_RADIUS)을 따라 말발굽 모양
+  //   경로 점마다 바깥 방향으로 그 원까지의 거리를 구해 외벽 위치로 씀 (관중석 뒷벽보다 가까우면 뒷벽 + 1.5m)
+  //   |q + n·s| = R 을 s에 대해 풀면 s = −(q·n) + √((q·n)² − (|q|² − R²))   (q = 경로 점 − 원 중심)
+  //   관중석 뒷벽과 외벽 사이 빈 곳은 옥상(평평한 지붕)으로 덮고, 양 끝은 벽으로 막음
+  const ROOF_CENTER = [0, -38], ROOF_RADIUS = 86; // 원 중심 (x, z), 반지름 (m)
+  const FACADE_HEIGHT = MAIN_STAND.top + 2.5;
+  const MAIN_OUTWARD = outwardDirections(MAIN_PATH);
+  // 메인 스탠드 경로 i번 점에서 바깥으로 off m 간 점(높이 y)과, 그 점에서 바깥을 보는 Y축 회전각 (로컬 +z = 바깥)
+  const standPoint = (i, off, y = 0) =>
+    [MAIN_PATH[i][0] + MAIN_OUTWARD[i][0] * off, y, MAIN_PATH[i][2] + MAIN_OUTWARD[i][2] * off];
+  const yawOut = (i) => Math.atan2(MAIN_OUTWARD[i][0], MAIN_OUTWARD[i][2]);
+  const FACADE_DIST = MAIN_PATH.map((p, i) => {
+    const n = MAIN_OUTWARD[i], qx = p[0] - ROOF_CENTER[0], qz = p[2] - ROOF_CENTER[1];
+    const b = qx * n[0] + qz * n[2], c = qx * qx + qz * qz - ROOF_RADIUS * ROOF_RADIUS;
+    return Math.max(-b + Math.sqrt(Math.max(0, b * b - c)), MAIN_STAND.back + 1.5);
+  });
+
+  // 관중석 뒤 외벽 (여러 층 건물 외관): 메인 스탠드 뒤 둥근 선 위
+  //   안쪽 벽(회색 벽 + 유리·불 켜진 창 띠) 앞에 흰 기둥이 경로 점마다 서고, 층마다 흰 바닥판이 튀어나온 열린 구조
+  //   2층 바닥판은 빨간 띠. 홈 뒤에 정문 건물, 둘레에 밝은 콘크리트 광장
+  const FLOOR_HEIGHTS = [3.4, 7.0, 10.2, 13.2, 16.8]; // 층 바닥판 높이 (m)
+  const RED_FLOOR = 7.0;                               // 빨간 띠가 되는 바닥판
+  const SLAB_DEPTH = 1.6, SLAB_THICK = 0.35, COLUMN_SIZE = 1.0;
+  const PLAZA_WIDTH = 22;                              // 외벽 바깥 광장 폭 (m)
+  function buildFacade(m) {
+    const path = MAIN_PATH;
+
+    // 1) 안쪽 벽
+    m.extrudeAlong(path, (i) => facadeProfile(FACADE_DIST[i]));
+
+    // 2) 층 바닥판: 외벽에서 SLAB_DEPTH만큼 튀어나온 얇은 판 (윗면 → 앞면 → 아랫면)
+    for (const h of FLOOR_HEIGHTS) {
+      const color = h === RED_FLOOR ? COLORS.facadeBanner : COLORS.roofEdge;
+      m.extrudeAlong(path, (i) => {
+        const f = FACADE_DIST[i];
+        return [
+          [f, h, color],
+          [f + SLAB_DEPTH, h, color],
+          [f + SLAB_DEPTH, h - SLAB_THICK, color, 'out'],
+          [f, h - SLAB_THICK, color, 'down'],
+        ];
+      }, false);
+    }
+
+    // 3) 흰 기둥: 경로 점마다 외벽 바로 앞에 바닥부터 지붕까지
+    for (let i = 0; i < path.length; i++) {
+      const transform = boxTransform(standPoint(i, FACADE_DIST[i] + SLAB_DEPTH - COLUMN_SIZE / 2), yawOut(i));
+      m.box([0, 0, 0], [COLUMN_SIZE, FACADE_HEIGHT, COLUMN_SIZE], COLORS.roofEdge, { transform, bottom: false });
+    }
+
+    // 4) 정문: 홈 바로 뒤(경로 가운데 점) 외벽 앞에 튀어나온 회색 건물
+    //   정문 로컬 좌표: x = 외벽 방향(가로), y = 위, z = 바깥쪽(앞면 z = 3). 아래부터
+    //   계단 3단 → 유리 출입문(흰 문틀) → 출입문 위 차양(아래에 조명) → 세로 금속 줄무늬 벽 + 빨간 현수막
+    //   → 꼭대기 간판(어두운 판 + 빨간 로고 자리) → 흰 테두리(양쪽 기둥 + 맨 위 처마)
+    const mid = Math.floor(path.length / 2);
+    const gate = boxTransform(standPoint(mid, FACADE_DIST[mid] + 3), yawOut(mid));
+    const GATE_W = 26, GATE_H = FACADE_HEIGHT + 3, FRONT = 3;
+    const DOOR_W = GATE_W - 6, DOOR_H = 5.5, CANOPY_Y = 5.8;
+    const gbox = (pos, size, color, bottom = true) => m.box(pos, size, color, { transform: gate, bottom });
+    gbox([0, 0, 0], [GATE_W, GATE_H, 6], COLORS.towerPole, false);                 // 몸체
+    // 흰 테두리: 양쪽 기둥 + 맨 위 처마
+    for (const s of [-1, 1]) gbox([s * (GATE_W / 2 - 1), 0, 0.5], [2, GATE_H + 0.5, 7], COLORS.roofEdge, false);
+    gbox([0, GATE_H - 1.2, 0.5], [GATE_W + 1, 1.2, 7], COLORS.roofEdge);
+    // 계단 3단: 바깥으로 갈수록 낮아짐
+    for (let k = 0; k < 3; k++) gbox([0, 0, FRONT + 0.5 + k], [DOOR_W + 2 - k, 0.15 * (3 - k), 1], COLORS.concrete, false);
+    // 유리 출입문 + 흰 문틀 (세로 5개)
+    gbox([0, 0, FRONT + 0.1], [DOOR_W, DOOR_H, 0.2], COLORS.facadeGlass, false);
+    for (let k = 0; k <= 4; k++) gbox([(k / 4 - 0.5) * DOOR_W, 0, FRONT + 0.2], [0.3, DOOR_H, 0.3], COLORS.roofEdge, false);
+    // 차양 + 아래 조명 4개 (밤에 빛남)
+    //   조명은 castShadow = true 묶음에 넣어 경기장의 다른 램프와 한 노드로 합침
+    //   (따로 묶이면 폭 16m짜리 빛나는 노드가 생기는데, effects.js가 "가장 좁은 빛나는 노드 = 전광판(27m)"으로 찾으므로
+    //    홈런 화면이 정문에 뜨게 됨)
+    gbox([0, CANOPY_Y, FRONT + 2], [DOOR_W + 2, 0.4, 4], COLORS.roofEdge);
+    m.castShadow = true;
+    for (let k = 0; k < 4; k++) gbox([(k - 1.5) * 5, CANOPY_Y - 0.15, FRONT + 2.5], [1.2, 0.15, 0.6], COLORS.lamp);
+    m.castShadow = false;
+    // 세로 금속 줄무늬 (차양 위 ~ 처마 아래)
+    const STRIPE_Y = CANOPY_Y + 1.2;
+    for (let k = 0; k < 11; k++) {
+      gbox([(k - 5) * 2.2, STRIPE_Y, FRONT + 0.05], [0.4, GATE_H - 1.2 - STRIPE_Y, 0.2], COLORS.roofEdge, false);
+    }
+    // 빨간 현수막 + 꼭대기 간판(어두운 판 위 빨간 로고 자리)
+    gbox([0, 8.5, FRONT + 0.3], [16, 4.5, 0.3], COLORS.facadeBanner);
+    gbox([0, GATE_H - 5, FRONT + 0.3], [8, 2.8, 0.3], COLORS.board);
+    gbox([0, GATE_H - 4.4, FRONT + 0.5], [5, 1.4, 0.1], COLORS.facadeBanner);
+
+    // 5) 광장: 외벽 바깥으로 PLAZA_WIDTH m 밝은 콘크리트 바닥 (잔디(0)보다 살짝 위)
+    m.extrudeAlong(path, (i) => [
+      [FACADE_DIST[i], 0.04, COLORS.roofUnder],
+      [FACADE_DIST[i] + PLAZA_WIDTH, 0.04, COLORS.roofUnder],
+    ], false);
+  }
+  // 안쪽 벽 단면: 외벽 위치 f에서 회색 벽과 유리·창 띠가 층마다 번갈아
+  function facadeProfile(f) {
+    const wall = COLORS.concrete;
+    return [
+      [f, 0, wall],
       [f, 2.8, COLORS.facadeGlass, 'out'],   // 1층 유리
-      [f, 3.4, COLORS.concrete, 'out'],
+      [f, 3.4, wall, 'out'],
       [f, 6.4, COLORS.facadeWindow, 'out'],  // 2층 콘코스 창
-      [f, 7.0, COLORS.concrete, 'out'],
-      [f, 9.6, COLORS.facadeBanner, 'out'],  // 3층 띠 (배너)
-      [f, 10.2, COLORS.concrete, 'out'],
+      [f, 7.0, wall, 'out'],
+      [f, 9.6, COLORS.facadeWindow, 'out'],  // 3층 콘코스 창
+      [f, 10.2, wall, 'out'],
       [f, 12.6, COLORS.facadeGlass, 'out'],  // 4층 유리
-      [f, FACADE_HEIGHT, COLORS.concrete, 'out'],
-      [16.1, FACADE_HEIGHT, COLORS.concrete, 'up'], // 옥상 (관중석 뒷벽까지)
-    ], true);
+      [f, 13.2, wall, 'out'],
+      [f, 16.2, COLORS.facadeWindow, 'out'], // 5층 창
+      [f, 16.8, wall, 'out'],
+      [f, 19.4, COLORS.facadeGlass, 'out'],  // 6층 유리
+      [f, FACADE_HEIGHT, wall, 'out'],
+      [MAIN_STAND.back, FACADE_HEIGHT, COLORS.concrete, 'up'], // 옥상 (관중석 뒷벽까지)
+    ];
   }
 
-  // 지붕 (캐노피): 외벽 위에서 시작해 그라운드 쪽으로 올라가며 관중석 뒤쪽 절반을 덮는 얇은 판, 한 바퀴
-  //   단면 = 윗면(뒤 → 앞) → 앞 가장자리 → 아랫면 → 뒤 가장자리
-  //   사진처럼 앞쪽 좌석은 지붕 밖으로 보이게 합니다.
-  const ROOF_FRONT = 7.0, ROOF_FRONT_TOP = 15.6, ROOF_EDGE = 0.6;
+  // 지붕 (남색 캐노피 + 흰 테두리): 둥근 외벽 위에서 시작해 그라운드 쪽으로 올라가며 위층 관중석을 덮는 얇은 판 (메인 스탠드만)
+  //   단면 = 윗면(뒤 → 앞) → 앞 가장자리 → 아랫면 → 뒤 가장자리. 뒤 가장자리는 경로 점마다 외벽 위치(FACADE_DIST)
+  //   아래층과 위층 앞쪽 좌석은 지붕 밖으로 보이게 합니다.
+  const ROOF_FRONT = UPPER_DECK.start + 3.0, ROOF_FRONT_TOP = FACADE_HEIGHT + 2.3, ROOF_EDGE = 0.6;
   // 지붕 윗면은 골판(주름진 패널)처럼 산·골을 번갈아 만듦.
   //   면마다 기울기가 달라서 햇빛·조명을 받는 각도가 달라지고, 정반사 하이라이트가 줄무늬로 반짝입니다.
   const ROOF_PANELS = 8, ROOF_RIDGE = 0.25; // 패널 개수, 산 높이 (m)
-  function buildRoof(m, path) {
-    const back = FACADE_OFFSET + 0.2;
+  function roofProfile(back) {
     const top = [];
     for (let k = 1; k <= ROOF_PANELS * 2; k++) {
       const t = k / (ROOF_PANELS * 2);                           // 0(뒤) → 1(앞)
       const off = back + (ROOF_FRONT - back) * t;
       const h = FACADE_HEIGHT + (ROOF_FRONT_TOP - FACADE_HEIGHT) * t + (k % 2 ? ROOF_RIDGE : 0); // 홀수 = 산
-      const color = t > 0.75 ? COLORS.roofTop2 : COLORS.roofTop; // 앞쪽 띠는 밝은 파랑
-      top.push([off, h, color, 'up']);
+      // 남색 지붕, 바깥 가장자리 2칸·앞 가장자리 2칸은 흰 띠
+      const rim = k <= 2 || k > ROOF_PANELS * 2 - 2;
+      top.push([off, h, rim ? COLORS.roofEdge : COLORS.roofNavy, 'up']);
     }
-    m.extrudeAlong(path, [
+    return [
       [back, FACADE_HEIGHT, COLORS.roofEdge],
       ...top,
       [ROOF_FRONT, ROOF_FRONT_TOP - ROOF_EDGE, COLORS.roofEdge, 'in'],
       [back, FACADE_HEIGHT - 0.3, COLORS.roofUnder, 'down'],
       [back, FACADE_HEIGHT, COLORS.roofEdge, 'out'],
-    ], true);
+    ];
+  }
+  function buildRoof(m) {
+    m.extrudeAlong(MAIN_PATH, (i) => roofProfile(FACADE_DIST[i] + 0.2));
   }
 
   function boxTransform(position, yaw, pitch = 0) {
@@ -241,24 +384,37 @@
   }
 
   // 지붕 앞 가장자리 아래에 달린 조명 (경로 점 2개마다 1개, 그라운드 쪽으로 35° 숙임)
-  function buildRoofLights(m, path) {
-    const outward = outwardDirections(path, true);
-    for (let i = 0; i < path.length; i += 2) {
-      const p = path[i], n = outward[i];
-      const off = ROOF_FRONT + 0.6;
-      const yaw = Math.atan2(n[0], n[2]); // 로컬 -z = -n (그라운드 쪽)
-      roofLightPositions.push([p[0] + n[0] * (off - 2), ROOF_FRONT_TOP - 3, p[2] + n[2] * (off - 2)]);
-      const position = [p[0] + n[0] * off, ROOF_FRONT_TOP - ROOF_EDGE - 0.75, p[2] + n[2] * off];
+  //   양 끝(첫 점·마지막 점)은 지붕 끝 모서리 밖으로 삐져나와 보여서 빼고, 그 안쪽부터 둠
+  function buildRoofLights(m) {
+    const off = ROOF_FRONT + 0.6;
+    for (let i = 2; i < MAIN_PATH.length - 2; i += 2) {
+      roofLightPositions.push(standPoint(i, off - 2, ROOF_FRONT_TOP - 3));
+      const position = standPoint(i, off, ROOF_FRONT_TOP - ROOF_EDGE - 0.75);
       roofFixtures.push({ id: `stadium_roof_light_${i}`, position });
-      const transform = boxTransform(position, yaw, -35 * DEG);
+      const transform = boxTransform(position, yawOut(i), -35 * DEG); // 로컬 -z = 그라운드 쪽
       m.box([0, 0, 0], [3.2, 0.7, 0.4], COLORS.towerFrame, { transform });
       m.box([0, 0.1, -0.22], [2.8, 0.5, 0.06], COLORS.lamp, { transform });
     }
   }
 
-  // 경기장 바깥 둘레(외벽 바로 바깥)의 점: 외야 호 위 각도 theta 기준 (조명탑·전광판 위치용)
-  function outsideBowlPoint(theta, extra) {
-    const r = fenceRadius(theta) + 2.5 + FACADE_OFFSET + extra, d = dir(theta);
+  // 지붕 앞 가장자리 위에 세운 조명 틀 (흰 지붕 위 철골 조명): 경로를 따라 고르게 RIG_COUNT개
+  const RIG_COUNT = 7;
+  function buildRoofRigs(m) {
+    for (let k = 0; k < RIG_COUNT; k++) {
+      const i = Math.round((k + 0.5) * (MAIN_PATH.length - 1) / RIG_COUNT);
+      const transform = boxTransform(standPoint(i, ROOF_FRONT + 1.2, ROOF_FRONT_TOP), yawOut(i), -20 * DEG); // 로컬 -z = 그라운드 쪽
+      m.box([0, 0, 0], [7.4, 3.6, 0.5], COLORS.towerFrame, { transform });
+      for (let r = 0; r < 2; r++) {
+        for (let c = 0; c < 5; c++) {
+          m.box([(c - 2) * 1.4, 0.4 + r * 1.5, -0.35], [1.1, 1.1, 0.25], COLORS.lamp, { transform });
+        }
+      }
+    }
+  }
+
+  // 외야 스탠드 바로 바깥의 점: 외야 호 위 각도 theta 기준 (조명탑 위치용)
+  function outsideStandPoint(theta, extra) {
+    const r = fenceRadius(theta) + 2.5 + OUTFIELD_STAND.back + extra, d = dir(theta);
     return [d[0] * r, 0, d[2] * r];
   }
 
@@ -300,17 +456,20 @@
 
   function buildStadiumModel() {
     const m = new MeshBuilder();
-    const path = bowlPath();
     m.castShadow = false;
     buildField(m);
+    buildFoulTerritory(m);
+    buildFoulGrass(m);
     buildHomePlate(m);
-    buildFacade(m, path);
+    buildFacade(m);
 
     m.castShadow = true;
     buildFence(m);
-    buildBowlStands(m, path);
-    buildRoof(m, path);
-    buildRoofLights(m, path);
+    m.extrudeAlong(MAIN_PATH, MAIN_STAND.prof);                                  // 메인 스탠드 (2층)
+    for (const path of OUTFIELD_PATHS) m.extrudeAlong(path, OUTFIELD_STAND.prof); // 외야 계단석
+    buildRoof(m);
+    buildRoofLights(m);
+    buildRoofRigs(m);
     buildMound(m);
     m.box([0, 0.34, -MOUND_DIST], [0.61, 0.04, 0.15], COLORS.white);
 
@@ -325,28 +484,28 @@
       const pole = dir(s * FOUL).map((x) => x * (fenceRadius(FOUL) + 0.2));
       m.box(pole, [0.35, 15, 0.35], COLORS.pole);
 
-      // 더그아웃: 파울 라인을 따라 24m, 바깥쪽으로 14.5m → 파울 라인과 나란하게 회전
-      //   로컬 x축 = 파울 라인 방향, 로컬 -z = 그라운드 쪽
+      // 더그아웃: 파울 라인을 따라 24m, 바깥쪽으로 DUGOUT_OFFSET m → 파울 라인과 나란하게 회전
+      //   관중석 앞벽에 붙어 있어 관중석 아래로 들어간 모양. 로컬 x축 = 파울 라인 방향, 로컬 -z = 그라운드 쪽
       const d = dir(s * FOUL), n = dir(s * 135 * DEG);
-      const transform = boxTransform([d[0] * 24 + n[0] * 14.5, 0, d[2] * 24 + n[2] * 14.5], s * FOUL);
+      const transform = boxTransform([d[0] * 24 + n[0] * DUGOUT_OFFSET, 0, d[2] * 24 + n[2] * DUGOUT_OFFSET], s * FOUL);
       m.box([0, 0, 0], [14, 2.2, 4], COLORS.dugout, { transform });
       m.box([0, 2.2, 0], [14.4, 0.2, 4.4], COLORS.roof, { transform });
       m.box([0, 0.3, -2.02], [12, 1.6, 0.04], COLORS.dugoutDark, { transform });
     }
 
-    // 조명탑: 외야 좌중간·우중간 외벽 바로 바깥에 2개 (나머지 조명은 지붕에 달림)
+    // 조명탑: 외야 좌중간·우중간 계단석 바로 바깥에 2개 (나머지 조명은 지붕에 달림)
     const towerPoles = [];
     for (const s of [1, -1]) {
       const side = s > 0 ? 'first' : 'third';
-      towerPoles.push(buildLightTower(m, `stadium_tower_${side}_outfield`, outsideBowlPoint(s * 20 * DEG, 2)));
+      towerPoles.push(buildLightTower(m, `stadium_tower_${side}_outfield`, outsideStandPoint(s * 20 * DEG, 2)));
     }
 
-    // 전광판: 기둥 두 개와 기둥 꼭대기 판
-    const SCOREBOARD_POST = 18; // 지붕(약 16m) 위로 판이 보이도록
-    const [boardX, , boardZ] = outsideBowlPoint(0, 1.5);
-    m.box([boardX - 10, 0, boardZ], [1, SCOREBOARD_POST, 1], COLORS.concrete);
-    m.box([boardX + 10, 0, boardZ], [1, SCOREBOARD_POST, 1], COLORS.concrete);
-    m.box([boardX, SCOREBOARD_POST, boardZ], [30, 12, 1.5], COLORS.board);
+    // 전광판: 어두운 아래 건물 + 흰 테두리 판 + 화면 (중견수 뒤, 예전 위치 그대로: 펜스에서 21.6m 뒤)
+    //   화면(boardFace) 크기·위치는 그대로 둠 → 팀원 코드(홈런 연출·점수판)가 이 화면을 찾아 위에 그림
+    const SCOREBOARD_POST = 18;
+    const [boardX, , boardZ] = dir(0).map((v) => v * (fenceRadius(0) + 21.6));
+    m.box([boardX, 0, boardZ - 1.5], [30, SCOREBOARD_POST, 4], COLORS.board);
+    m.box([boardX, SCOREBOARD_POST - 1, boardZ], [34, 14, 1.5], COLORS.roofEdge);
     m.box([boardX, SCOREBOARD_POST + 1, boardZ + 0.76], [27, 10, 0.04], COLORS.boardFace);
 
     const root = m.toNode('stadium_root');
@@ -364,7 +523,14 @@
     rubber: [0, 0.34, -MOUND_DIST],
     bases: { first, second, third },
     fenceRadius,
+    dugoutOffset: DUGOUT_OFFSET, // 덕아웃 중심 = dir(s·FOUL) × 24 + dir(s·135°) × dugoutOffset
   };
 
-  Object.assign(window.STADIUM_PARTS, { bowlPath, BOWL_STAND, stadiumRoot });
+  // 관중 배치용: 관중석 층마다 { 경로, 계단 치수 } (crowd.js에서 사용)
+  const STANDS = [
+    { path: MAIN_PATH, ...LOWER_DECK },
+    { path: MAIN_PATH, ...UPPER_DECK },
+    ...OUTFIELD_PATHS.map((path) => ({ path, ...OUTFIELD_DECK })),
+  ];
+  Object.assign(window.STADIUM_PARTS, { STANDS, stadiumRoot });
 })();

@@ -50,8 +50,6 @@
     fence: [0.12, 0.32, 0.24],
     fenceTop: [0.95, 0.80, 0.15],
     pole: [0.98, 0.84, 0.10],
-    seatA: [0.20, 0.38, 0.70],
-    seatB: [0.25, 0.46, 0.80],
     outSeatA: [0.70, 0.22, 0.20],
     outSeatB: [0.80, 0.28, 0.24],
     concrete: [0.62, 0.62, 0.64],
@@ -64,10 +62,9 @@
     towerPole: [0.55, 0.57, 0.60],
     towerFrame: [0.22, 0.23, 0.26],
     lamp: [1.00, 0.97, 0.86],
-    roofTop: [0.30, 0.45, 0.75],    // 사진의 파란 지붕
-    roofTop2: [0.42, 0.58, 0.86],   // 지붕 앞쪽 밝은 띠
     roofUnder: [0.78, 0.80, 0.84],
     roofEdge: [0.88, 0.89, 0.91],
+    roofNavy: [0.12, 0.17, 0.32],   // 메인 스탠드 지붕 윗면 (짙은 남색)
     facadeGlass: [0.20, 0.27, 0.36],
     facadeWindow: [0.86, 0.58, 0.36], // 따뜻한 색 창 (사진의 불 켜진 콘코스)
     facadeBanner: [0.72, 0.18, 0.18],
@@ -84,13 +81,13 @@
     return 100 + 22 * Math.cos(2 * theta);
   }
 
-  // 수평 경로의 각 점에서 접선에 수직이면서 경기장 바깥(FIELD_CENTER 반대)을 향하는 방향
-  //   closed = true면 닫힌 경로(마지막 점 다음이 첫 점)로 보고 양 끝도 이웃을 이어서 계산
-  function outwardDirections(points, closed = false) {
+  // 열린 수평 경로의 각 점에서 접선에 수직이면서 경기장 바깥(FIELD_CENTER 반대)을 향하는 방향
+  //   접선 = 앞뒤 이웃 점을 잇는 방향 (양 끝 점은 자기 자신과 이웃 하나)
+  function outwardDirections(points) {
     const count = points.length;
     return points.map((p, i) => {
-      const a = closed ? points[(i - 1 + count) % count] : points[Math.max(i - 1, 0)];
-      const b = closed ? points[(i + 1) % count] : points[Math.min(i + 1, count - 1)];
+      const a = points[Math.max(i - 1, 0)];
+      const b = points[Math.min(i + 1, count - 1)];
       let n = normalize([-(b[2] - a[2]), 0, b[0] - a[0]]);
       if (n[0] * (p[0] - FIELD_CENTER[0]) + n[2] * (p[2] - FIELD_CENTER[2]) < 0) n = n.map((x) => -x);
       return n;
@@ -111,14 +108,11 @@
     boardFace: { specular: 1.0, shininess: 40 },    // 전광판 화면
     towerPole: { specular: 1.2, shininess: 32 },    // 금속 기둥
     pole: { specular: 1.0, shininess: 32 },         // 파울 폴 (도장 금속)
-    roofTop: { specular: 1.5, shininess: 28 },      // 지붕 패널 (금속 골판)
-    roofTop2: { specular: 1.5, shininess: 28 },
+    roofNavy: { specular: 1.5, shininess: 28 },     // 지붕 패널 (남색 금속 골판)
     fenceTop: { specular: 0.8, shininess: 24 },
     board: { specular: 0.8, shininess: 24 },
     towerFrame: { specular: 0.7, shininess: 20 },
-    seatA: { specular: 0.6, shininess: 24 },        // 플라스틱 좌석
-    seatB: { specular: 0.6, shininess: 24 },
-    outSeatA: { specular: 0.6, shininess: 24 },
+    outSeatA: { specular: 0.6, shininess: 24 },     // 플라스틱 좌석
     outSeatB: { specular: 0.6, shininess: 24 },
     roof: { specular: 0.7, shininess: 20 },         // 더그아웃 지붕
     roofEdge: { specular: 0.6, shininess: 16 },
@@ -262,19 +256,6 @@
       }
     }
 
-    // 수평 링 (흰색 원 라인)
-    ring(cx, cz, rIn, rOut, y, color, segments = 40) {
-      for (let i = 0; i < segments; i++) {
-        const a = (i / segments) * Math.PI * 2;
-        const b = ((i + 1) / segments) * Math.PI * 2;
-        this.quad(
-          [cx + Math.cos(a) * rIn, y, cz + Math.sin(a) * rIn],
-          [cx + Math.cos(a) * rOut, y, cz + Math.sin(a) * rOut],
-          [cx + Math.cos(b) * rOut, y, cz + Math.sin(b) * rOut],
-          [cx + Math.cos(b) * rIn, y, cz + Math.sin(b) * rIn], color);
-      }
-    }
-
     // 두 점 사이의 얇은 띠 (라인 페인트)
     strip(p0, p1, width, y, color) {
       const dx = p1[0] - p0[0], dz = p1[2] - p0[2];
@@ -285,45 +266,36 @@
         [p1[0] - nx, y, p1[2] - nz], [p0[0] - nx, y, p0[2] - nz], color);
     }
 
-    // 수평 경로(points)를 따라 2D 단면(profile: [바깥 방향 오프셋, 높이, 색])을 밀어내기
-    //   closed = true면 닫힌 고리: 마지막 점과 첫 점도 이어 붙이고, 양 끝 막는 면은 만들지 않음
-    extrudeAlong(points, profile, closed = false) {
-      const outward = outwardDirections(points, closed);
-      const count = points.length;
+    // 열린 수평 경로(points)를 따라 2D 단면(profile: [바깥 방향 오프셋, 높이, 색, (법선 방향)])을 밀어내기
+    //   profile = 배열이면 경로 전체에 같은 단면 (관중석)
+    //           = 함수 (i) => 배열이면 경로 점마다 다른 단면 (둥근 외벽·지붕). 모든 단면의 점 개수는 같아야 함
+    //   caps = true면 양 끝 단면을 막음 (false: 얇은 바닥판·광장처럼 끝 벽이 필요 없는 것)
+    extrudeAlong(points, profile, caps = true) {
+      const outward = outwardDirections(points);
+      const profiles = points.map((_, i) => (typeof profile === 'function' ? profile(i) : profile));
       const at = (i, k) => {
-        const p = points[i], n = outward[i], [off, h] = profile[k];
+        const p = points[i], n = outward[i], [off, h] = profiles[i][k];
         return [p[0] + n[0] * off, h, p[2] + n[2] * off];
       };
-      for (let i = 0; i < (closed ? count : count - 1); i++) {
-        const j = (i + 1) % count;
-        for (let k = 0; k < profile.length - 1; k++) {
-          const dh = profile[k + 1][1] - profile[k][1];
-          // 올라가는 수직면(앞벽·단 높이)은 그라운드 쪽, 내려가는 면(뒷벽)은 바깥쪽, 수평면은 위
-          let hint = [0, 1, 0];
-          if (dh > 0) hint = outward[i].map((x) => -x);
-          if (dh < 0) hint = outward[i];
-          // 단면 점의 4번째 값으로 법선 방향을 직접 지정 가능 (기울어진 지붕 등)
-          const mode = profile[k + 1][3];
-          if (mode === 'up') hint = [0, 1, 0];
-          if (mode === 'down') hint = [0, -1, 0];
-          if (mode === 'in') hint = outward[i].map((x) => -x);
-          if (mode === 'out') hint = outward[i];
-          this.quad(at(i, k), at(i, k + 1), at(j, k + 1), at(j, k), profile[k + 1][2], hint);
+      // 법선 방향: 올라가는 수직면(앞벽·단 높이)은 그라운드 쪽, 내려가는 면(뒷벽)은 바깥쪽, 수평면은 위
+      //   단면 점의 4번째 값('up'·'down'·'in'·'out')으로 직접 지정 가능 (기울어진 지붕 등)
+      const HINTS = { up: () => [0, 1, 0], down: () => [0, -1, 0], in: (n) => n.map((x) => -x), out: (n) => n };
+      for (let i = 0; i < points.length - 1; i++) {
+        const prof = profiles[i], n = outward[i];
+        for (let k = 0; k < prof.length - 1; k++) {
+          const dh = prof[k + 1][1] - prof[k][1];
+          const mode = HINTS[prof[k + 1][3]] ? prof[k + 1][3] : dh > 0 ? 'in' : dh < 0 ? 'out' : 'up';
+          this.quad(at(i, k), at(i, k + 1), at(i + 1, k + 1), at(i + 1, k), prof[k + 1][2], HINTS[mode](n));
         }
       }
-      if (closed) return;
+      if (!caps) return;
       // 양 끝 단면 막기: 수평 구간마다 바닥까지 내려오는 사각형 (법선 = 경로 바깥 방향)
       const last = points.length - 1;
-      const ends = [
-        [0, [points[0][0] - points[1][0], 0, points[0][2] - points[1][2]]],
-        [last, [points[last][0] - points[last - 1][0], 0, points[last][2] - points[last - 1][2]]],
-      ];
-      for (const [i, hint] of ends) {
-        for (let k = 0; k < profile.length - 1; k++) {
+      for (const [i, j] of [[0, 1], [last, last - 1]]) {
+        const hint = [points[i][0] - points[j][0], 0, points[i][2] - points[j][2]];
+        for (let k = 0; k < profiles[i].length - 1; k++) {
           const a = at(i, k), b = at(i, k + 1);
-          if (Math.abs(a[1] - b[1]) < 1e-6) {
-            this.quad([a[0], 0, a[2]], [b[0], 0, b[2]], b, a, COLORS.concrete, hint);
-          }
+          if (Math.abs(a[1] - b[1]) < 1e-6) this.quad([a[0], 0, a[2]], [b[0], 0, b[2]], b, a, COLORS.concrete, hint);
         }
       }
     }

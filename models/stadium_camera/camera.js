@@ -1,6 +1,6 @@
 'use strict';
 
-// [역할 1] 카메라 — 버튼 3~7 시점, 8 공 따라가기, 9 자유 카메라(WASD·E/C·Shift·드래그·휠), 10 멈춤
+// [역할 1] 카메라 — 버튼 3~7 시점, 8 공 따라가기, 9 자유 카메라(WASD 이동·방향키 회전·E/C·Shift·드래그·휠), 10 멈춤
 // 버튼은 켜고 끄는 방식: 켜진 버튼은 파란색, 한 번 더 누르면 꺼짐. 여러 개가 함께 켜질 수 있음
 //   기본 시점(3~7 또는 9) 하나 + 공 따라가기(8) + 멈춤(10)
 //   예) 3 → 8: 투수 뒤 자리에서 시선만 공을 따라감 (3·8 파란색). 8을 끄면 투수 뒤 시점으로 돌아옴
@@ -11,6 +11,7 @@
 
   const EYE_MIN_Y = 0.5;                     // 카메라 최소 높이 (땅 밑 방지)
   const FREE_SPEED = 20;                     // 자유 카메라 속도 (m/s), Shift = 3배
+  const TURN_SPEED = 90;                     // 자유 카메라 방향키 회전 속도 (°/s)
   const DEFAULT_PRESET = 'pitcher';          // 기본 시점 버튼을 끄면 돌아가는 시점 (투수 뒤, 버튼은 파란색 아님)
 
   window.ACTIVE_CAMERA = {
@@ -176,9 +177,12 @@
 
   // 입력
   const keys = new Set();
-  const FREE_KEYS = new Set(['KeyW', 'KeyA', 'KeyS', 'KeyD', 'KeyE', 'KeyC', 'ShiftLeft', 'ShiftRight']);
+  const FREE_KEYS = new Set(['KeyW', 'KeyA', 'KeyS', 'KeyD', 'KeyE', 'KeyC', 'ShiftLeft', 'ShiftRight',
+    'ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown']);
   window.addEventListener('keydown', (e) => {
-    if (FREE_KEYS.has(e.code) && !/^(INPUT|TEXTAREA|SELECT)$/.test(e.target?.tagName)) keys.add(e.code);
+    if (!FREE_KEYS.has(e.code) || /^(INPUT|TEXTAREA|SELECT)$/.test(e.target?.tagName)) return;
+    keys.add(e.code);
+    if (state.base === 'free' && e.code.startsWith('Arrow')) e.preventDefault(); // 방향키로 페이지가 스크롤되지 않게
   });
   window.addEventListener('keyup', (e) => keys.delete(e.code));
 
@@ -207,6 +211,9 @@
     if (state.base === 'free' && keys.size > 0) {
       const axis = (plus, minus) => (keys.has(plus) ? 1 : 0) - (keys.has(minus) ? 1 : 0);
       const step = FREE_SPEED * (keys.has('ShiftLeft') || keys.has('ShiftRight') ? 3 : 1) * dt;
+      // 방향키: 시점 회전 (←→ 좌우, ↑↓ 위아래), 초당 TURN_SPEED도
+      free.yaw += axis('ArrowLeft', 'ArrowRight') * TURN_SPEED * dt;
+      free.pitch = clamp(free.pitch + axis('ArrowUp', 'ArrowDown') * TURN_SPEED * dt, -89, 89);
       moveFree(axis('KeyW', 'KeyS') * step, axis('KeyD', 'KeyA') * step, axis('KeyE', 'KeyC') * step);
     }
     if (state.following) updateFollow(dt);
