@@ -216,6 +216,6 @@
 
   // 새 경기(다시 시작 포함)마다 타이틀부터
   G.onNewGame = showTitle;
-  Object.assign(G, { showTitle, startPick, pickTeam });
+  Object.assign(G, { showTitle, startPick, pickTeam, introPhase: () => phase });
   showTitle();
 })();
