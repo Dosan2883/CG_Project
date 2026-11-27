@@ -173,9 +173,9 @@
     if (!state) return;
     renderBoard(state);
     renderPanel(state);
-    // 주자 = 공격 팀 유니폼 색
+    // 주자 = 공격 팀 유니폼 (색 + 엠블럼)
     const batting = G.battingTeamKey?.();
-    G.showRunners?.(state.over || state.choosing ? [] : state.bases, batting ? G.TEAMS[batting].color : [200, 200, 200]);
+    G.showRunners?.(state.over || state.choosing ? [] : state.bases, batting ? G.TEAMS[batting] : null);
     G.updateScoreboard?.(state); // 외야 전광판 (scoreboard.js)
   }
 

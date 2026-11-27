@@ -105,26 +105,61 @@
   }
 
   // ------------------------------------------------------------------
-  // 3) 주자 (루 위의 네모)
+  // 3) 주자: 다른 선수들과 같은 모양 (몸통 네모 + 머리 구 + 모자 구 + 가슴·모자 엠블럼)
+  //   크기는 fielders.js의 makePerson과 같음 (키 1.8 = 몸통 1.44 + 머리). 몸 앞 = 로컬 −z, 홈플레이트 쪽을 봄
   // ------------------------------------------------------------------
   const BASES = [
     info.bases?.first ?? [19.4, 0, -19.4],
     info.bases?.second ?? [0, 0, -38.8],
     info.bases?.third ?? [-19.4, 0, -19.4],
   ];
-  const runnerNodes = BASES.map((base, i) => ({
-    id: `runner_${i}`,
-    primitive: 'box',
-    position: [base[0], (base[1] ?? 0) + 0.85, base[2] + 0.9],
-    meshScale: [0.5, 1.7, 0.4],
-    color: [220, 60, 60],
-    visible: false,
-  }));
-  // bases = [1루, 2루, 3루] 주자 있음 여부, color = 공격 팀 색
-  function showRunners(bases, color) {
+  const RUNNER_QUAD = { // 엠블럼 판 (텍스처 좌표 0~1)
+    positions: new Float32Array([-0.5, -0.5, 0, 0.5, -0.5, 0, 0.5, 0.5, 0, -0.5, 0.5, 0]),
+    normals: new Float32Array([0, 0, 1, 0, 0, 1, 0, 0, 1, 0, 0, 1]),
+    texCoords: new Float32Array([0, 0, 1, 0, 1, 1, 0, 1]),
+    indices: new Uint16Array([0, 1, 2, 0, 2, 3]),
+  };
+  const RB = { width: 0.55, height: 1.44, depth: 0.38 };
+  const RHEAD_Y = RB.height + 0.18;
+  function makeRunner(base, i) {
+    const position = [base[0], base[1] ?? 0, base[2] + 0.9]; // 루 바로 옆 (홈 쪽)
+    const body = { id: `runner_${i}_body`, primitive: 'box', meshOffset: [0, RB.height / 2, 0], meshScale: [RB.width, RB.height, RB.depth], color: [200, 200, 200] };
+    const head = { id: `runner_${i}_head`, primitive: 'sphere', position: [0, RHEAD_Y, 0], meshScale: 0.17, color: [235, 195, 160] };
+    const cap = { id: `runner_${i}_cap`, primitive: 'sphere', position: [0, RHEAD_Y + 0.07, 0], meshScale: [0.18, 0.1, 0.18], color: [120, 120, 120] };
+    // 몸 앞이 −z라서 판을 Y축 180° 돌려 붙임 (흰 바탕 패치 + 엠블럼)
+    const chestY = RB.height / 2 + RB.height * 0.18, chestH = Math.min(RB.width * 0.55, RB.height * 0.35);
+    const flat = (id, pos, size, extra) => ({
+      id, primitive: RUNNER_QUAD, position: pos, rotation: [0, Math.PI, 0], meshScale: [size, size, 1], castShadow: false, ...extra,
+    });
+    const patches = [
+      flat(`runner_${i}_chest_patch`, [0, chestY, -(RB.depth / 2 + 0.003)], chestH * 1.25, { color: [245, 245, 245] }),
+      flat(`runner_${i}_cap_patch`, [0, RHEAD_Y + 0.09, -0.187], 0.12, { color: [245, 245, 245] }),
+    ];
+    const decals = [
+      flat(`runner_${i}_chest_logo`, [0, chestY, -(RB.depth / 2 + 0.006)], chestH, { color: [255, 255, 255], blend: 'alpha', decalHeight: chestH }),
+      flat(`runner_${i}_cap_logo`, [0, RHEAD_Y + 0.09, -0.19], 0.1, { color: [255, 255, 255], blend: 'alpha', decalHeight: 0.1 }),
+    ];
+    return {
+      id: `runner_${i}`,
+      position,
+      rotation: [0, Math.atan2(position[0], position[2]), 0], // 홈플레이트 쪽을 봄
+      visible: false,
+      children: [body, head, cap, ...patches, ...decals],
+      body, cap, decals,
+    };
+  }
+  const runnerNodes = BASES.map(makeRunner);
+  // bases = [1루, 2루, 3루] 주자 있음 여부, team = 공격 팀 (rules.js의 TEAMS 항목: color·cap·mark·markAspect)
+  function showRunners(bases, team) {
     runnerNodes.forEach((node, i) => {
       node.visible = Boolean(bases[i]);
-      node.color = color;
+      if (!team) return;
+      node.body.color = team.color;
+      node.cap.color = team.cap;
+      for (const d of node.decals) {
+        d.texture = team.mark;
+        d.meshScale = [d.decalHeight * team.markAspect, d.decalHeight, 1]; // 엠블럼 비율대로
+      }
     });
   }
 

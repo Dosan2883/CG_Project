@@ -6,7 +6,7 @@
 //   │            1   2   3   4   5  │  R    H       │  ← 회 번호 (배경 그림)
 //   │ [C] 덕진   0   1   0          │  1    3       │  ← 선공 팀 (엠블럼 + 이름 + 회별 점수 + R(점수) + H(안타))
 //   │ [A] 완산   0   0              │  0    1       │  ← 후공 팀
-//   │ B ●●●  S ●●  O ●●                    3회초    │  ← 볼카운트 램프 + 지금 회
+//   │ B ●●●  S ●●  O ●●        ◇◆◇       3회초    │  ← 볼카운트 램프 + 주자(루) + 지금 회
 //   └──────────────────────────────────────────────┘
 //
 //   텍스처 좌표(UV) 활용
@@ -177,6 +177,19 @@
     id: `score_lamp_${k}${i}`, primitive: QUAD, position: at(u, ROW.bottom, 0.08), meshScale: [H * 0.1, H * 0.1, 1],
     color: [0, 0, 0], texture: LAMP.off, blend: 'alpha', emissive: true, fog: false, castShadow: false,
   }))]));
+  // 주자 표시: 다이아몬드 모양 사각형 3개 (45° 돌린 정사각형). 주자가 있으면 노랑, 없으면 어두운 회색
+  //   왼쪽 위 점수판(ui.js)의 베이스 표시와 같은 배치: 1루 = 오른쪽, 2루 = 위, 3루 = 왼쪽
+  const BASE_ON = [255, 216, 74], BASE_OFF = [42, 47, 58];
+  const DIAMOND = { u: 0.64, v: ROW.bottom, du: 0.032, dv: 0.085 }; // 가운데, 좌우·위아래 간격
+  const baseLamps = [
+    [DIAMOND.u + DIAMOND.du, DIAMOND.v - DIAMOND.dv / 2], // 1루
+    [DIAMOND.u, DIAMOND.v + DIAMOND.dv / 2],              // 2루
+    [DIAMOND.u - DIAMOND.du, DIAMOND.v - DIAMOND.dv / 2], // 3루
+  ].map(([u, v], i) => ({
+    id: `score_base_${i + 1}`, primitive: QUAD, position: at(u, v, 0.08), rotation: [0, 0, Math.PI / 4],
+    meshScale: [H * 0.075, H * 0.075, 1], color: BASE_OFF, emissive: true, fog: false, castShadow: false,
+  }));
+
   // 지금 회 표시: "3회초" (글자 3개) + 지금 칸 밑줄
   const inningText = [0.79, 0.85, 0.91].map((u, i) => glyphNode(`score_inning_${i}`, u, ROW.bottom, 'sky', H * 0.15));
   const nowBar = {
@@ -190,7 +203,7 @@
     children: [
       background, emblems.away, emblems.home, nowBar,
       ...Object.values(rows).flatMap((r) => [...r.innings, ...r.R, ...r.H]),
-      ...Object.values(lamps).flat(), ...inningText,
+      ...Object.values(lamps).flat(), ...baseLamps, ...inningText,
     ],
   };
   window.SCENE_MODELS = window.SCENE_MODELS ?? [];
@@ -227,6 +240,8 @@
 
     const counts = { B: state.balls, S: state.strikes, O: state.outs };
     for (const k of ['B', 'S', 'O']) lamps[k].forEach((lamp, i) => { lamp.texture = i < counts[k] ? LAMP[k] : LAMP.off; });
+
+    baseLamps.forEach((lamp, i) => { lamp.color = state.bases[i] && !state.over ? BASE_ON : BASE_OFF; });
 
     const over = state.over;
     setGlyph(inningText[0], over ? null : String(state.inning));
