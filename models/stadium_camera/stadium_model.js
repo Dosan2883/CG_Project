@@ -536,5 +536,7 @@
     { path: MAIN_PATH, ...UPPER_DECK },
     { path: OUTFIELD_PATH, ...OUTFIELD_DECK },
   ];
-  Object.assign(window.STADIUM_PARTS, { STANDS, stadiumRoot });
+  // 경기장 바깥 둘레(광장 끝까지 포함한 원: 중심 [x, z], 반지름) — city.js가 둘레 도로를 이 원 바깥으로 냄
+  const STADIUM_OUTLINE = { center: ROOF_CENTER, radius: ROOF_RADIUS + PLAZA_WIDTH };
+  Object.assign(window.STADIUM_PARTS, { STANDS, stadiumRoot, STADIUM_OUTLINE });
 })();

@@ -68,15 +68,16 @@
   }
 
   // 시간별 안개 밀도 (클수록 짙음). 노을·새벽에 조금 더 짙게. 사이 시간은 선형 보간
-  //   밀도 0.004 기준: 120m 앞은 약 20%, 300m 앞은 약 76%가 안개 색
+  //   밀도 0.0022 기준 (안개 비율 = 1 − e^−(밀도×거리)²): 120m 앞은 약 7%, 300m(아파트) 약 35%, 420m(산 능선) 약 57%
+  //   → 멀리 있는 산도 흐릿하게 보이고, 가까울수록 또렷 (대기 원근)
   const FOG_KEYS = [
-    { hour: 5.0, density: 0.0050 },
-    { hour: 6.0, density: 0.0056 },   // 새벽 안개
-    { hour: 8.0, density: 0.0040 },
-    { hour: 16.5, density: 0.0040 },
-    { hour: 18.5, density: 0.0058 },  // 노을
-    { hour: 20.0, density: 0.0050 },
-    { hour: 23.0, density: 0.0050 },
+    { hour: 5.0, density: 0.00275 },
+    { hour: 6.0, density: 0.0031 },   // 새벽 안개
+    { hour: 8.0, density: 0.0022 },
+    { hour: 16.5, density: 0.0022 },
+    { hour: 18.5, density: 0.0032 },  // 노을
+    { hour: 20.0, density: 0.00275 },
+    { hour: 23.0, density: 0.00275 },
   ];
   function fogDensityAt(hour) {
     for (let i = 0; i < FOG_KEYS.length - 1; i++) {
