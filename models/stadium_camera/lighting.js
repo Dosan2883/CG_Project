@@ -4,7 +4,7 @@
 // 5시~23시 시간에 따라 태양 위치·하늘색·빛 색·경기장 조명을 바꾸고, 시간 슬라이더와 버튼 11을 만듭니다.
 // 파일끼리 공유하는 값은 window.STADIUM_PARTS 한 곳에 모읍니다. (다른 팀원 코드와 이름 충돌 방지)
 (function () {
-  const { DEG, glowNodes, towerLightPositions, roofLightPositions, roofFixtures, onFrame } = window.STADIUM_PARTS;
+  const { DEG, glowNodes, towerLightPositions, roofLightPositions, roofFixtures, apartments, onFrame } = window.STADIUM_PARTS;
   // ------------------------------------------------------------------
   // 조명: 시간대(5시 ~ 23시)에 따라 태양·하늘·빛·경기장 조명이 바뀜
   //   common/app.js가 매 프레임 window.ACTIVE_LIGHTING을 읽어 그립니다.
@@ -147,6 +147,13 @@
     sunNode.visible = sunUp;
     // 조명이 절반 이상 켜지면 램프·콘코스 창·전광판 화면이 스스로 빛남 (조명 계산 무시)
     for (const node of glowNodes) node.emissive = isNight(currentHour);
+    // 외야 너머 아파트: 주변광이 어두워질수록 밤 겹(불 켜진 창문)이 서서히 진해짐
+    //   주변광 0.40(낮) → 0 , 0.07(밤) → 1, 사이는 smoothstep으로 부드럽게 (노을·새벽에 반쯤 섞임)
+    if (apartments) {
+      const k = Math.min(1, Math.max(0, (0.40 - keys.ambient) / (0.40 - 0.07)));
+      apartments.night.opacity = k * k * (3 - 2 * k);
+      apartments.night.visible = apartments.night.opacity > 0.01;
+    }
     // 빛 번짐 판: 경기장 조명 밝기(lampLevel)만큼 진해짐
     for (const { node, strength } of glowSprites) {
       node.visible = lampLevel > 0;

@@ -4,10 +4,11 @@
 //
 // models/stadium_camera/ 폴더 파일 (index.html에서 이 순서로 불러옴)
 //   1) mesh_builder.js   공통 상수·색·도우미 + MeshBuilder
-//   2) stadium_model.js  경기장 모양(한 바퀴 도는 원형 관중석·외벽·지붕) + 노드 트리 조립 → window.SCENE_MODELS
-//   3) crowd.js          관중 배치 + 들썩임 애니메이션
-//   4) lighting.js       시간대 조명(태양·하늘·경기장 조명) + 슬라이더·버튼 11
-//   5) camera.js         궤도 카메라 + 시점 버튼 3~6
+//   2) stadium_model.js  경기장 모양(말발굽 2층 관중석·외야석·둥근 지붕·외벽·정문) + 노드 트리 조립 → window.SCENE_MODELS
+//   3) city.js           외야 너머 아파트 (낮 건물 + 밤 겹)
+//   4) crowd.js          관중 배치 + 들썩임 애니메이션
+//   5) lighting.js       시간대 조명(태양·하늘·경기장 조명·아파트 밤 창문) + 슬라이더·버튼 11
+//   6) camera.js         카메라 버튼 3~10 (시점·공 따라가기·자유 카메라·멈춤) + 숫자 키
 //
 // 좌표계·단위 (팀 공통으로 맞추면 좋은 값)
 //   - 단위: m (실제 야구장 규격)

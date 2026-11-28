@@ -1,8 +1,9 @@
 'use strict';
 
 // [역할 1] 경기장 모양 + 노드 트리 조립
-// 그라운드·펜스·관중석·외벽·지붕·마운드·베이스·더그아웃·조명탑·전광판을 만들고
-// window.SCENE_MODELS에 경기장 루트 노드를 등록합니다.
+// 그라운드(파울 지역 흙·잔디 포함)·펜스·관중석(메인 2층 + 외야)·외벽·정문·광장·지붕·마운드·베이스·더그아웃·
+// 조명탑·전광판을 만들어 경기장 루트 노드 하나로 묶고 window.SCENE_MODELS에 등록합니다.
+// (외야 너머 아파트는 city.js)
 // 파일끼리 공유하는 값은 window.STADIUM_PARTS 한 곳에 모읍니다. (다른 팀원 코드와 이름 충돌 방지)
 (function () {
   const {
@@ -15,9 +16,8 @@
 
   // 그라운드 전체: 얇은 층을 y 높이로 겹쳐서 그립니다 (z-fighting 방지, 아래 → 위 순서)
   function buildField(m) {
-    const secondZ = -BASE_DIST * Math.SQRT2;
 
-    // 1) 바닥 전체 (파울 지역 잔디)  y = 0
+    // 1) 바닥 전체 (경기장 바깥 땅. 파울 지역은 위에 흙·잔디를 따로 깜)  y = 0
     const G = 600; // 멀리서 볼 때 바닥 끝이 잘 안 보이도록 넓게
     m.quad([-G, 0, G], [G, 0, G], [G, 0, -G], [-G, 0, -G], COLORS.groundGrass);
 
@@ -35,7 +35,7 @@
     m.fan(-48 * DEG, 48 * DEG, 64, dirtR, null, 0.06, () => COLORS.dirt);
 
     // 4) 내야 잔디 다이아몬드  y = 0.09
-    const cz = secondZ / 2, k = 16.3;
+    const cz = second[2] / 2, k = 16.3; // 홈과 2루의 가운데
     m.quad([0, 0.09, cz + k], [k, 0.09, cz], [0, 0.09, cz - k], [-k, 0.09, cz], COLORS.infieldGrass);
 
     // 5) 홈 주변 흙 원  y = 0.12
@@ -102,7 +102,7 @@
   // 계단식 관중석 단면: [바깥 방향 오프셋, 높이, 색]
   // 관중석 한 층의 계단 치수: 시작 오프셋, 첫 좌석 높이, 줄 수, 한 단 높이, 한 단 깊이 (관중 배치에서도 사용)
   //   메인 스탠드(좌측 폴 ~ 홈 뒤 ~ 우측 폴) = 아래층 → 콘코스 → 층 사이 띠 → 위층 (모두 빨간 좌석)
-  //   외야 스탠드(좌중간·우중간) = 낮은 회색 계단석. emptyRate = 빈자리 비율 (관중 배치에서 사용)
+  //   외야 스탠드(외야를 한 바퀴 둘러 메인 스탠드 양 끝과 이어짐) = 낮은 회색 계단석. emptyRate = 빈자리 비율 (관중 배치에서 사용)
   const LOWER_DECK = { start: 0, firstY: 1.4, rows: 14, rise: 0.45, depth: 0.85 };
   const CONCOURSE = 2.0, BAND_HEIGHT = 2.4; // 층 사이 통로 폭, 위층 앞벽(밤에 빛나는 띠) 높이
   const UPPER_DECK = {
@@ -150,12 +150,13 @@
 
   // 관중석 경로 (관중석 앞벽 위치)
   //   메인 스탠드 (높은 2층, 말발굽 모양): 1루 라인(폴 근처) → 홈 뒤 반원 → 3루 라인(폴 근처)
-  //   외야 스탠드 (낮은 계단석 2개): 좌중간·우중간 펜스 뒤. 가운데(중견수 뒤)는 전광판 자리
+  //   외야 스탠드 (낮은 계단석 1개): 3루 쪽 메인 스탠드 끝 → 폴 바깥 → 펜스 뒤 외야 한 바퀴 → 1루 쪽 메인 스탠드 끝
+  //     중견수 뒤 전광판 앞도 채움 (전광판은 스탠드 뒤 더 높은 곳에 있어 그대로 보임)
   //   관중석·외벽·지붕·지붕 조명·관중이 모두 이 경로를 기준으로 바깥 방향 오프셋을 씁니다.
   const LINE_OFFSET = 12;          // 파울 라인에서 관중석 앞벽까지 거리
   const DUGOUT_OFFSET = LINE_OFFSET - 2; // 파울 라인에서 덕아웃 중심까지 (깊이 4m → 뒷면이 관중석 앞벽에 붙음)
   const LINE_LENGTH = 90;          // 메인 스탠드 직선 구간 길이 (홈에서 파울 라인을 따라, 폴 근처까지)
-  const [OS_FROM, OS_TO] = [10, 32];     // 외야 스탠드 구간 (중견수 방향 기준 ±10° ~ ±32°)
+  const OUTFIELD_ANGLE = 47.5;     // 외야 스탠드 펜스 뒤 구간 (중견수 방향 기준 ±47.5°, 파울 라인 바깥까지)
 
   // 외야 호 위의 점: 펜스 2.5m 뒤
   function outfieldArcPoint(theta) {
@@ -204,7 +205,10 @@
     return { path, edge };
   }
   const { path: MAIN_PATH, edge: MAIN_EDGE } = mainStandPath();
-  const OUTFIELD_PATHS = [arcPoints(-OS_TO, -OS_FROM), arcPoints(OS_FROM, OS_TO)]; // 좌중간, 우중간
+  // 외야 스탠드 경로: 3루 쪽 메인 스탠드 끝 앞벽 점 + 펜스 뒤 호(−47.5° → +47.5°) + 1루 쪽 메인 스탠드 끝 앞벽 점
+  //   → 폴 뒤를 지나 양쪽 메인 스탠드 끝과 이어짐 (겹치는 부분은 메인 스탠드 안에 묻혀 안 보임)
+  const mainEnd = (s) => lineStandPoint(s, LINE_LENGTH);
+  const OUTFIELD_PATH = [mainEnd(-1), ...arcPoints(-OUTFIELD_ANGLE, OUTFIELD_ANGLE), mainEnd(1)];
 
   // 파울 지역 흙바닥: 파울 라인(MAIN_EDGE)부터 관중석 앞벽(MAIN_PATH)까지 이웃한 점끼리 사각형으로 깔아
   //   그라운드와 관중석 사이를 흙으로 이음 (외야 잔디(0.03)보다 낮은 0.02 높이)
@@ -397,7 +401,7 @@
     }
   }
 
-  // 지붕 앞 가장자리 위에 세운 조명 틀 (흰 지붕 위 철골 조명): 경로를 따라 고르게 RIG_COUNT개
+  // 지붕 앞 가장자리 위에 세운 조명 틀 (지붕 위 철골 조명): 경로를 따라 고르게 RIG_COUNT개
   const RIG_COUNT = 7;
   function buildRoofRigs(m) {
     for (let k = 0; k < RIG_COUNT; k++) {
@@ -466,7 +470,7 @@
     m.castShadow = true;
     buildFence(m);
     m.extrudeAlong(MAIN_PATH, MAIN_STAND.prof);                                  // 메인 스탠드 (2층)
-    for (const path of OUTFIELD_PATHS) m.extrudeAlong(path, OUTFIELD_STAND.prof); // 외야 계단석
+    m.extrudeAlong(OUTFIELD_PATH, OUTFIELD_STAND.prof);                          // 외야 계단석
     buildRoof(m);
     buildRoofLights(m);
     buildRoofRigs(m);
@@ -502,11 +506,11 @@
 
     // 전광판: 어두운 아래 건물 + 흰 테두리 판 + 화면 (중견수 뒤, 예전 위치 그대로: 펜스에서 21.6m 뒤)
     //   화면(boardFace) 크기·위치는 그대로 둠 → 팀원 코드(홈런 연출·점수판)가 이 화면을 찾아 위에 그림
-    const SCOREBOARD_POST = 18;
+    const BOARD_BASE_H = 18; // 아래 건물 높이 (그 위에 판)
     const [boardX, , boardZ] = dir(0).map((v) => v * (fenceRadius(0) + 21.6));
-    m.box([boardX, 0, boardZ - 1.5], [30, SCOREBOARD_POST, 4], COLORS.board);
-    m.box([boardX, SCOREBOARD_POST - 1, boardZ], [34, 14, 1.5], COLORS.roofEdge);
-    m.box([boardX, SCOREBOARD_POST + 1, boardZ + 0.76], [27, 10, 0.04], COLORS.boardFace);
+    m.box([boardX, 0, boardZ - 1.5], [30, BOARD_BASE_H, 4], COLORS.board);
+    m.box([boardX, BOARD_BASE_H - 1, boardZ], [34, 14, 1.5], COLORS.roofEdge);
+    m.box([boardX, BOARD_BASE_H + 1, boardZ + 0.76], [27, 10, 0.04], COLORS.boardFace);
 
     const root = m.toNode('stadium_root');
     root.children.push(...towerPoles);
@@ -530,7 +534,7 @@
   const STANDS = [
     { path: MAIN_PATH, ...LOWER_DECK },
     { path: MAIN_PATH, ...UPPER_DECK },
-    ...OUTFIELD_PATHS.map((path) => ({ path, ...OUTFIELD_DECK })),
+    { path: OUTFIELD_PATH, ...OUTFIELD_DECK },
   ];
   Object.assign(window.STADIUM_PARTS, { STANDS, stadiumRoot });
 })();
